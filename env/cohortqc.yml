@@ -1,0 +1,16 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  CallForge — cohort QC + contamination environment (Stages 5, 12)
+#  somalier (relatedness/ancestry/sex), peddy (pedigree QC), VerifyBamID2
+#  (contamination). Kept separate from the core solve (verifybamid2 + somalier
+#  pull an older htslib pin than the calling stack).
+# ═══════════════════════════════════════════════════════════════════════════
+name: callforge-cohortqc
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - somalier=0.2.19
+  - peddy=0.4.8
+  - verifybamid2=2.0.1
+  - bcftools=1.21
+  - samtools=1.21

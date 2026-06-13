@@ -1,0 +1,17 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  CallForge — annotation environment (Stage 11)
+#  VEP (consequence/transcript/SIFT/PolyPhen/ClinVar) + vcfanno (gnomAD-AFR AF,
+#  dbSNP IDs, PhyloP, any discovered BYO databases). Organism-generic: point VEP
+#  at the species cache; vcfanno reads a bring-your-own-databases TOML.
+#  VEP release is pinned to match the local cache discovered by discover_resources.py.
+# ═══════════════════════════════════════════════════════════════════════════
+name: callforge-annotate
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - ensembl-vep=110.1         # match to discovered VEP cache release (110/112 both seen locally)
+  - vcfanno=0.3.5
+  - bcftools=1.21
+  - htslib=1.21
+  - samtools=1.21

@@ -1,0 +1,69 @@
+# ─── CallForge .gitignore ─────────────────────────────────────────────────
+# Never commit large data, references, annotation DBs, or run outputs.
+
+# Nextflow run state
+work/
+work_*/
+.nextflow/
+.nextflow.log*
+results/
+results_*/
+report.html
+timeline.html
+trace.txt*
+dag.html
+
+# References / indices / annotation databases (discovered locally; never vendored)
+refs/
+reference/
+*.fa
+*.fa.gz
+*.fasta
+*.fasta.gz
+*.fai
+*.dict
+*.amb
+*.ann
+*.bwt*
+*.pac
+*.sa
+*.0123
+*.bwt.2bit.64
+vep_cache/
+*.gff.gz
+*.gtf.gz
+
+# Sequence / alignment / variant data
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+*.bam
+*.bai
+*.cram
+*.crai
+*.sam
+*.vcf
+*.vcf.gz
+*.vcf.gz.tbi
+*.g.vcf.gz
+*.bcf
+*.bed.gz
+*.bigWig
+*.bw
+
+# Test data is generated locally by test/make_test_data.sh; keep the generator,
+# never the products (mini-genome, FASTQs, fixture sample sheet with abs paths).
+test/data/
+
+# Local-only / private inputs
+_local/
+
+# Conda / container build artifacts
+*.sif
+.create_env.log
+__pycache__/
+*.pyc
+
+# OS cruft
+.DS_Store
