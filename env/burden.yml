@@ -1,0 +1,19 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  CallForge — rare-variant burden / association environment (Stage 14)
+#  regenie is the default gene-burden engine (Firth-corrected, scales to large
+#  cohorts; uses ancestry PCs + sample-sheet covariates). The R-based
+#  alternative (SKAT-O / STAAR) is provided too for small-N gene-set tests.
+# ═══════════════════════════════════════════════════════════════════════════
+name: callforge-burden
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - regenie=3.6
+  - plink2=2.00a5.10          # genotype prep (BGEN/PGEN) for regenie
+  - bcftools=1.21
+  # ---- R alternative: SKAT-O / STAAR (use --burden_engine skat) ----
+  - r-base=4.3.3
+  - r-skat=2.2.5
+  - bioconductor-staar=0.9.7
+  - r-data.table=1.15.4

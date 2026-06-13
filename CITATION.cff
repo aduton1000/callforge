@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use CallForge, please cite it as below."
+title: "CallForge: a targeted-capture germline analysis pipeline (FASTQ → annotated joint callset → burden)"
+abstract: >-
+  CallForge is a disease- and organism-agnostic Nextflow DSL2 pipeline that takes
+  demultiplexed paired-end FASTQs from a hybridization-capture panel and produces a
+  high-quality, joint-genotyped, annotated, QC'd callset spanning SNV/indel, CNV, STR
+  and paralog-aware variants, then a rare-variant burden/association layer. It is the
+  analysis counterpart to the CaptureForge probe-design pipeline and consumes its
+  handoff (final_covered_targets.bed and per-gene metadata).
+authors:
+  - name: "Genomics & Bioinformatics Core"
+version: 0.1.0
+license: MIT
+type: software
+keywords:
+  - bioinformatics
+  - germline variant calling
+  - targeted capture
+  - nextflow
+  - rare-variant burden
+references:
+  - type: software
+    title: "CaptureForge: hybridization-capture probe design pipeline"
+    notes: "Upstream design pipeline; CallForge consumes its final_covered_targets.bed and per-gene metadata."

@@ -1,0 +1,15 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  CallForge — CNV environment (Stage 8, default caller)
+#  CNVkit is the default read-depth germline CNV caller for a targeted panel
+#  (robust on small cohorts; builds a panel-of-normals from QC-passing samples).
+#  The configurable alternative — GATK gCNV — needs no extra env (it ships in
+#  the core env's gatk4) and is selected with --cnv_caller gatk_gcnv.
+# ═══════════════════════════════════════════════════════════════════════════
+name: callforge-cnv
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - cnvkit=0.9.11
+  - samtools=1.21
+  - bcftools=1.21

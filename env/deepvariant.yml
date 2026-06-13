@@ -1,0 +1,14 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  CallForge — DeepVariant + GLnexus environment (Stage 6, optional alternative)
+#  Selected with --caller deepvariant. DeepVariant is normally run from its
+#  official container (google/deepvariant); GLnexus performs the joint merge of
+#  per-sample gVCFs. Use the docker/apptainer profile for DeepVariant on HPC.
+# ═══════════════════════════════════════════════════════════════════════════
+name: callforge-deepvariant
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - deepvariant=1.6.1         # prefer the google/deepvariant container on HPC
+  - glnexus=1.4.1
+  - bcftools=1.21

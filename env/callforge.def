@@ -1,0 +1,39 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  CallForge — Apptainer/Singularity definition (HPC; Docker usually banned)
+#  Build:  apptainer build callforge.sif env/callforge.def
+#  Native linux-64 toolchain (no emulation) for the production cohort run.
+#  This packages the CORE env; specialized envs are built from their own
+#  env/*.yml (or pulled as official containers, e.g. google/deepvariant).
+# ═══════════════════════════════════════════════════════════════════════════
+Bootstrap: docker
+From: mambaorg/micromamba:1.5.8
+
+%files
+    env/callforge.yml /opt/callforge.yml
+
+%post
+    micromamba install -y -n base -f /opt/callforge.yml
+    micromamba clean --all --yes
+    echo 'export PATH=/opt/conda/bin:$PATH' >> $SINGULARITY_ENVIRONMENT
+
+%environment
+    export PATH=/opt/conda/bin:$PATH
+    export LC_ALL=C
+
+%test
+    samtools --version | head -1
+    bcftools --version | head -1
+    bwa-mem2 version 2>&1 | head -1
+    gatk --version 2>&1 | head -3
+    mosdepth --version
+    python -c "import pandas, numpy, scipy, matplotlib, allel, pysam, pyfaidx, jinja2; print('py libs OK')"
+
+%labels
+    Name CallForge
+    Version 0.1.0
+    License MIT
+
+%help
+    CallForge targeted-capture germline analysis pipeline (core env).
+    Run via Nextflow:
+      nextflow run main.nf -profile hpc_slurm,apptainer -params-file params.yaml

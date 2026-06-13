@@ -1,0 +1,13 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  CallForge — STR genotyping environment (Stage 9)
+#  ExpansionHunter with a panel-specific variant catalog built from the
+#  CaptureForge STR loci (PIEZO1 E756del, HMOX1 (GT)n, SLC11A1 (GT)n).
+# ═══════════════════════════════════════════════════════════════════════════
+name: callforge-str
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - expansionhunter=5.0.0
+  - samtools=1.21
+  - bcftools=1.21

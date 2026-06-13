@@ -1,0 +1,53 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  CallForge — example parameter file (copy + edit)
+#    nextflow run main.nf -profile mac_local,conda -params-file params.yaml
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ---- Inputs ----
+input:        /path/to/samplesheet.csv      # sample_id,fastq_1,fastq_2,sex,phenotype,covariate_*,batch
+panel_name:   my_panel_v1
+
+# ---- CaptureForge handoff ----
+target_bed:        /path/to/final_covered_targets.bed
+captureforge_dir:  /path/to/captureforge/results/<run>   # auto-finds metrics.json + baits.csv
+# Or, without CaptureForge outputs, supply metadata directly:
+# gene_metadata:   /path/to/gene_metadata.tsv
+# paralog_genes:   "CD209,CASP1,CR1,HP,CFH"
+# str_catalog:     /path/to/expansionhunter_catalog.json
+
+# ---- Reference (must equal the CaptureForge design genome; GRCh38 no-alt) ----
+genome_build: GRCh38
+genome_fasta: /path/to/GRCh38_noalt_primary.fa
+species:      homo_sapiens
+
+# ---- Resource discovery (Stage 0 / §5) ----
+resource_dirs: "/home/me,/usr/local/share,/data/refs"
+allow_download: false        # set true only if a required DB is missing and you opt in
+# Explicit overrides (else discovered):
+# vep_cache:    /path/to/.vep
+# vep_release:  110
+# gnomad_vcf:   /path/to/gnomad.afr.vcf.gz
+# dbsnp_vcf:    /path/to/dbsnp.vcf.gz
+# clinvar_vcf:  /path/to/clinvar.vcf.gz
+# phylop_bw:    /path/to/phyloP.bw
+# known_sites:  "/path/dbsnp.vcf.gz,/path/Mills.vcf.gz,/path/1000G_indels.vcf.gz"
+
+# ---- Calling ----
+caller:       gatk           # gatk | deepvariant
+joint_method: genomicsdb
+
+# ---- CNV ----
+cnv_caller:   cnvkit         # cnvkit | gatk_gcnv
+
+# ---- GIAB validation (optional but recommended) ----
+giab_control_id: HG002
+# giab_truth_vcf: /path/to/HG002_GRCh38_1_22_v4.2.1_benchmark.vcf.gz
+# giab_truth_bed: /path/to/HG002_GRCh38_1_22_v4.2.1_benchmark_noinconsistent.bed
+
+# ---- Burden (needs a phenotype column; else auto-skipped) ----
+run_burden:    true
+burden_engine: regenie       # regenie | skat
+burden_af_max: 0.01
+n_ancestry_pcs: 4
+
+outdir:        results

@@ -1,0 +1,14 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  CallForge — GIAB benchmarking environment (Stage 13)
+#  hap.py compares the GIAB control callset to truth, restricted to the panel
+#  BED, emitting SNV & indel precision/recall/F1. hap.py carries a legacy
+#  (python2-era) dependency closure, so it is strictly isolated here.
+# ═══════════════════════════════════════════════════════════════════════════
+name: callforge-happy
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - hap.py=0.3.15
+  - bcftools=1.21
+  - samtools=1.21
