@@ -19,10 +19,89 @@ are validated and take precedence over a scan hit.
 
 stdlib-only. Fingerprint is fast (size + md5 of the first 1 MiB) unless --full-md5.
 """
-import argparse, glob, gzip, hashlib, json, os, re, sys
+import argparse, glob, gzip, hashlib, json, os, re, shutil, subprocess, sys
+from collections import defaultdict
 
 SKIP_DIRS = {".git", "work", ".nextflow", "node_modules", "__pycache__",
              ".cache", "Library", ".Trash", "results", "results_full"}
+
+HAVE_TABIX = shutil.which("tabix") is not None
+
+
+def bed_spans(path):
+    """Per-contig (min_start, max_end) across the target BED."""
+    spans = {}
+    with open(path) as fh:
+        for line in fh:
+            if not line.strip() or line.startswith(("#", "track", "browser")):
+                continue
+            f = line.rstrip("\n").split("\t")
+            c, s, e = f[0], int(f[1]), int(f[2])
+            if c in spans:
+                spans[c] = (min(spans[c][0], s), max(spans[c][1], e))
+            else:
+                spans[c] = (s, e)
+    return spans
+
+
+def norm_contig(c):
+    return c[3:] if c.lower().startswith("chr") else c
+
+
+def vcf_contig_map(path):
+    """norm_name -> actual VCF contig name, from the tabix index (fast)."""
+    try:
+        out = subprocess.run(["tabix", "-l", path], check=True, capture_output=True,
+                             text=True, timeout=120).stdout
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return {norm_contig(c.strip()): c.strip() for c in out.splitlines() if c.strip()}
+
+
+def vcf_scope(path, spans, scope_min):
+    """Does the VCF's data span the target BED? Returns a scope dict.
+
+    A region-subset DB (e.g. a single-locus gnomAD) has records on only a few of
+    the target's contigs -> low fraction -> flagged unfit. chr/no-chr naming is
+    reconciled. Probes one BED span per contig (tabix stops at the first record).
+    """
+    if not HAVE_TABIX:
+        return {"scope_checked": False, "note": "tabix unavailable; scope not gated"}
+    cmap = vcf_contig_map(path)
+    if cmap is None:
+        return {"scope_checked": False, "note": "no usable tabix index for scope check"}
+    total = len(spans)
+    covered, missing = 0, []
+    for c, (s, e) in spans.items():
+        actual = cmap.get(norm_contig(c))
+        hit = False
+        if actual:
+            # Stream and stop at the first record — a wide span over a genome-wide
+            # DB (e.g. dbSNP) can emit huge output; we only need existence.
+            proc = None
+            try:
+                proc = subprocess.Popen(["tabix", path, f"{actual}:{s+1}-{e}"],
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                first = proc.stdout.readline()
+                hit = bool(first.strip())
+            except (subprocess.SubprocessError, OSError):
+                pass
+            finally:
+                if proc:
+                    proc.stdout.close()
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+        if hit:
+            covered += 1
+        else:
+            missing.append(c)
+    frac = covered / total if total else 0.0
+    return {"scope_checked": True, "contigs_total": total, "contigs_covered": covered,
+            "scope_fraction": round(frac, 4), "uncovered_contigs": missing[:20],
+            "fit": frac >= scope_min}
 
 
 def fingerprint(path, full=False):
@@ -75,7 +154,7 @@ def indexed(path):
     return False
 
 
-def validate_vcf(path, want_build, full_md5, need_afr=False):
+def validate_vcf(path, want_build, full_md5, need_afr=False, spans=None, scope_min=0.9):
     rec = {"path": path, "exists": os.path.isfile(path)}
     if not rec["exists"]:
         rec["status"] = "missing"
@@ -95,6 +174,17 @@ def validate_vcf(path, want_build, full_md5, need_afr=False):
         rec["has_afr"] = has_afr(hdr)
         if not rec["has_afr"]:
             notes.append("no AFR-population AF field detected in header")
+    # Genomic-scope gate: a found-but-region-limited DB silently under-annotates
+    # outside its region (a missing gnomAD-AFR AF can be misread as rare-novel),
+    # so a DB whose data does not span the target BED is flagged UNFIT, not ok.
+    if spans and rec["indexed"]:
+        sc = vcf_scope(path, spans, scope_min)
+        rec["scope"] = sc
+        if sc.get("scope_checked") and not sc.get("fit"):
+            status = "unfit_scope"
+            notes.append(f"data spans only {sc['contigs_covered']}/{sc['contigs_total']} "
+                         f"target contigs (frac={sc['scope_fraction']} < {scope_min}); "
+                         f"region-subset DB — replace with a genome-wide resource")
     rec["status"] = status
     rec["notes"] = "; ".join(notes)
     return rec
@@ -158,12 +248,23 @@ def main():
     for k in ("vep-cache", "gnomad-vcf", "dbsnp-vcf", "clinvar-vcf", "phylop-bw"):
         ap.add_argument(f"--{k}", default=None)
     ap.add_argument("--known-sites", default=None, help="comma list of BQSR known-sites VCFs")
+    ap.add_argument("--target-bed", default=None,
+                    help="target BED; enables the genomic-scope gate on annotation VCFs")
+    ap.add_argument("--scope-min", type=float, default=0.9,
+                    help="min fraction of target contigs a DB must span to be 'fit'")
+    ap.add_argument("--fail-on-unfit", action="store_true",
+                    help="exit 2 if any FOUND annotation DB is unfit_scope (real-run gate)")
     a = ap.parse_args()
 
     dirs = [d for d in a.dirs.split(",") if d.strip()]
     build = a.genome_build
     human = a.species == "homo_sapiens"
-    manifest = {"species": a.species, "genome_build": build, "scanned_dirs": dirs, "resources": {}}
+    spans = bed_spans(a.target_bed) if (a.target_bed and os.path.isfile(a.target_bed)) else None
+    manifest = {"species": a.species, "genome_build": build, "scanned_dirs": dirs,
+                "scope_gate": {"enabled": bool(spans), "scope_min": a.scope_min,
+                               "fail_on_unfit": a.fail_on_unfit,
+                               "tabix_available": HAVE_TABIX},
+                "resources": {}}
     R = manifest["resources"]
 
     # ---- VEP cache ----
@@ -189,37 +290,43 @@ def main():
     def pat_any(*subs):
         return lambda low: low.endswith((".vcf.gz", ".vcf.bgz")) and any(s in low for s in subs)
 
-    # gnomAD (prefer AFR)
+    sm = a.scope_min
+    fit_first = lambda r: r.get("status") not in ("ok",)  # ok sorts before unfit/other
+
+    # gnomAD (prefer AFR + fit scope)
     if a.gnomad_vcf:
-        R["gnomad_vcf"] = validate_vcf(a.gnomad_vcf, build, a.full_md5, need_afr=True); R["gnomad_vcf"]["source"] = "override"
+        R["gnomad_vcf"] = validate_vcf(a.gnomad_vcf, build, a.full_md5, need_afr=True, spans=spans, scope_min=sm)
+        R["gnomad_vcf"]["source"] = "override"
     elif human:
         cands = find_files(dirs, [pat_any("gnomad")])
-        recs = [validate_vcf(c, build, a.full_md5, need_afr=True) for c in cands]
-        recs.sort(key=lambda r: (not r.get("has_afr", False), r.get("status") != "ok"))
+        recs = [validate_vcf(c, build, a.full_md5, need_afr=True, spans=spans, scope_min=sm) for c in cands]
+        recs.sort(key=lambda r: (r.get("status") != "ok", not r.get("has_afr", False)))
         R["gnomad_vcf"] = recs[0] if recs else {"path": None, "status": "missing"}
         if len(recs) > 1:
-            R["gnomad_vcf"]["other_candidates"] = [r["path"] for r in recs[1:]]
+            R["gnomad_vcf"]["other_candidates"] = [{"path": r["path"], "status": r["status"]} for r in recs[1:]]
     else:
         R["gnomad_vcf"] = {"path": None, "status": "n/a", "notes": "non-human; gnomAD not applicable"}
 
     # dbSNP
     if a.dbsnp_vcf:
-        R["dbsnp_vcf"] = validate_vcf(a.dbsnp_vcf, build, a.full_md5); R["dbsnp_vcf"]["source"] = "override"
+        R["dbsnp_vcf"] = validate_vcf(a.dbsnp_vcf, build, a.full_md5, spans=spans, scope_min=sm)
+        R["dbsnp_vcf"]["source"] = "override"
     elif human:
         cands = find_files(dirs, [pat_any("dbsnp", "00-all", "common_all")])
-        recs = [validate_vcf(c, build, a.full_md5) for c in cands]
-        recs.sort(key=lambda r: r.get("status") != "ok")
+        recs = [validate_vcf(c, build, a.full_md5, spans=spans, scope_min=sm) for c in cands]
+        recs.sort(key=fit_first)
         R["dbsnp_vcf"] = recs[0] if recs else {"path": None, "status": "missing"}
     else:
         R["dbsnp_vcf"] = {"path": None, "status": "n/a"}
 
     # ClinVar
     if a.clinvar_vcf:
-        R["clinvar_vcf"] = validate_vcf(a.clinvar_vcf, build, a.full_md5); R["clinvar_vcf"]["source"] = "override"
+        R["clinvar_vcf"] = validate_vcf(a.clinvar_vcf, build, a.full_md5, spans=spans, scope_min=sm)
+        R["clinvar_vcf"]["source"] = "override"
     elif human:
         cands = find_files(dirs, [pat_any("clinvar")])
-        recs = [validate_vcf(c, build, a.full_md5) for c in cands]
-        recs.sort(key=lambda r: r.get("status") != "ok")
+        recs = [validate_vcf(c, build, a.full_md5, spans=spans, scope_min=sm) for c in cands]
+        recs.sort(key=fit_first)
         R["clinvar_vcf"] = recs[0] if recs else {"path": None, "status": "missing"}
     else:
         R["clinvar_vcf"] = {"path": None, "status": "n/a"}
@@ -246,6 +353,11 @@ def main():
     else:
         R["known_sites"] = {"status": "n/a", "files": []}
 
+    # Collect found-but-unfit annotation DBs (the silent-corruption case).
+    unfit = {name: rec for name, rec in R.items()
+             if isinstance(rec, dict) and rec.get("status") == "unfit_scope"}
+    manifest["unfit_resources"] = sorted(unfit.keys())
+
     with open(a.out_json, "w") as fh:
         json.dump(manifest, fh, indent=2)
 
@@ -259,11 +371,24 @@ def main():
             extra = f" afr={rec.get('has_afr')}"
         if name == "vep_cache" and rec.get("release"):
             extra = f" release={rec.get('release')}"
+        sc = rec.get("scope") if isinstance(rec, dict) else None
+        if sc and sc.get("scope_checked"):
+            extra += f" scope={sc['contigs_covered']}/{sc['contigs_total']}"
         if name == "known_sites":
             path = f"{len(rec.get('files', []))} file(s)"
-        mark = {"ok": "FOUND", "missing": "MISSING", "n/a": "n/a"}.get(st, st.upper())
+        mark = {"ok": "FOUND", "missing": "MISSING", "n/a": "n/a",
+                "unfit_scope": "UNFIT-SCOPE"}.get(st, st.upper())
         print(f"  - {name:<12} [{mark}]{extra}  {path or ''}")
     print(f"[discover_resources] wrote {a.out_json}")
+
+    if unfit:
+        msg = ("; ".join(f"{n}: {R[n].get('notes','region-subset')}" for n in unfit))
+        sys.stderr.write(f"[discover_resources] UNFIT (found but region-limited): {msg}\n")
+        if a.fail_on_unfit:
+            sys.stderr.write("[discover_resources] FAIL: a found annotation DB does not span "
+                             "the target panel. Replace it with a genome-wide resource, or pass "
+                             "--ignore-unfit / set allow_download. Refusing to under-annotate.\n")
+            sys.exit(2)
 
 
 if __name__ == "__main__":

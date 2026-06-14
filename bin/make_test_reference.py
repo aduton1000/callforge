@@ -220,10 +220,21 @@ def main():
     with open(os.path.join(vep, "info.txt"), "w") as fh:
         fh.write("# fake VEP cache fixture for CallForge test discovery\nassembly\tGRCh38\n")
     gnv = os.path.join(resdir, "gnomad_test.vcf")
+    # One record per target contig so the toy gnomAD is genomic-scope FIT (spans
+    # the whole test panel) — exercises the scope gate's pass path.
+    first_iv = {}
+    for (c, s, e, _) in bed_rows:
+        first_iv.setdefault(c, (s, e))
     with open(gnv, "w") as fh:
         fh.write("##fileformat=VCFv4.2\n##INFO=<ID=AF_afr,Number=A,Type=Float,Description=\"AFR AF\">\n")
+        for name, seq in contigs.items():
+            fh.write(f"##contig=<ID={name},length={len(seq)}>\n")
         fh.write("##reference=GRCh38\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
-        fh.write(f"{truth_contig}\t{spike_pos+1}\t.\t{ref_base}\t{alt_base}\t.\t.\tAF_afr=0.01\n")
+        for c in contigs:
+            pos = first_iv.get(c, (10, 20))[0] + 5
+            rb = contigs[c][pos] if pos < len(contigs[c]) else "A"
+            ab = {"A": "G", "G": "A", "C": "T", "T": "C", "N": "A"}.get(rb, "A")
+            fh.write(f"{c}\t{pos+1}\t.\t{rb}\t{ab}\t.\t.\tAF_afr=0.01\n")
     run(["bgzip", "-f", gnv]); run(["tabix", "-p", "vcf", gnv + ".gz"])
 
     print(f"[make_test] fixture ready in {a.outdir} "

@@ -35,6 +35,12 @@ DBS samples. It generalizes to any panel/cohort/organism by changing inputs + co
 - **Discover, don't download.** Local annotation/known-sites resources are found and
   validated (`bin/discover_resources.py`); nothing is fetched unless missing **and**
   required **and** opted in (`--allow_download`).
+- **Genomic-scope gate.** Discovery validates not just build/index but whether each
+  annotation DB's data actually **spans the target panel**. A found-but-region-limited
+  DB (e.g. a single-locus gnomAD) is flagged `unfit_scope` and **fails loud** — it
+  would otherwise silently return "no AF / no ClinVar" outside its region and corrupt
+  rare-variant filtering and burden testing. Waive with `--ignore_unfit_resources`
+  (not advised); tune with `--scope_min`.
 
 ## Quick start
 

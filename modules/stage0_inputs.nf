@@ -75,6 +75,7 @@ process DISCOVER_RESOURCES {
 
     input:
     val resource_dirs
+    path bed
 
     output:
     path "resource_manifest.json", emit: manifest
@@ -87,9 +88,12 @@ process DISCOVER_RESOURCES {
     def phylop   = params.phylop_bw  ? "--phylop-bw ${params.phylop_bw}"    : ""
     def known    = params.known_sites? "--known-sites ${params.known_sites}": ""
     def vrel     = params.vep_release? "--vep-release ${params.vep_release}": ""
+    // Fail loud on a found-but-region-limited DB unless explicitly waived.
+    def gate     = (params.ignore_unfit_resources || params.allow_download) ? "" : "--fail-on-unfit"
     """
     discover_resources.py --dirs "${resource_dirs}" \\
         --species ${params.species} --genome-build ${params.genome_build} ${vrel} \\
+        --target-bed ${bed} --scope-min ${params.scope_min} ${gate} \\
         ${vep} ${gnomad} ${dbsnp} ${clinvar} ${phylop} ${known} \\
         --out-json resource_manifest.json
     """
