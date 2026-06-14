@@ -29,8 +29,8 @@ rows <- lapply(genes, function(g) {
   Z <- t(as.matrix(geno[geno$gene == g, samples, drop = FALSE]))
   storage.mode(Z) <- "numeric"
   p <- tryCatch(SKAT(Z, obj, method = "SKATO")$p.value, error = function(e) NA)
-  data.frame(unit = paste0("gene:", g), kind = "gene", n_variants = sum(geno$gene == g),
-             p = p)
+  data.frame(unit = paste0("gene:", g), kind = "gene", engine = "SKAT-O",
+             n_variants = sum(geno$gene == g), p = p)
 })
 df <- do.call(rbind, rows)
 df <- df[order(df$p), ]

@@ -59,10 +59,15 @@ def main():
     for r in csv.DictReader(open(a.metadata), delimiter="\t"):
         group[r["gene"]] = r.get("burden_group") or r["gene"]
 
-    # ancestry PCs
-    pcs = {}
+    # ancestry PCs + STABILITY GATE: on a tight panel, PCs come from few (largely
+    # off-target) sites and can be unstable; using unstable PCs as covariates is worse
+    # than none. Require enough PCA sites for the cohort size, else DROP the PCs and
+    # run unadjusted (recorded in burden_meta). This is a gate, not a note.
+    pcs, n_pca_sites = {}, 0
     if a.cohort_qc and os.path.isfile(a.cohort_qc):
-        pcs = (json.load(open(a.cohort_qc)).get("pca") or {})
+        cq = json.load(open(a.cohort_qc))
+        pcs = cq.get("pca") or {}
+        n_pca_sites = int(cq.get("n_variants") or 0)
 
     samples = subprocess.run(["bcftools", "query", "-l", a.vcf], check=True,
                              capture_output=True, text=True).stdout.split()
@@ -145,7 +150,12 @@ def main():
         for s in samples:
             fh.write(f"{s}\t{pheno.get(s, '')}\n")
 
-    npc = min(a.n_pcs, max((len(v) for v in pcs.values()), default=0))
+    avail_pc = min(a.n_pcs, max((len(v) for v in pcs.values()), default=0))
+    pcs_stable = n_pca_sites >= max(50, 10 * len(samples))
+    npc = avail_pc if pcs_stable else 0
+    pc_note = ("used" if (pcs_stable and avail_pc) else
+               f"DROPPED — unstable: only {n_pca_sites} PCA sites for {len(samples)} samples "
+               f"(need >= {max(50, 10*len(samples))}); ran UNADJUSTED for ancestry")
     with open(os.path.join(a.outdir, "covariates.tsv"), "w") as fh:
         hdr = ["sample_id"] + cov_cols + [f"PC{i+1}" for i in range(npc)]
         fh.write("\t".join(hdr) + "\n")
@@ -155,14 +165,18 @@ def main():
             vals += [f"{pcs.get(s, [0]*npc)[i]:.5f}" if s in pcs else "0" for i in range(npc)]
             fh.write("\t".join([s] + [str(v) for v in vals]) + "\n")
 
+    # Counts over CALLSET samples only — quarantined samples are absent from the VCF
+    # and must not appear in any burden count (quarantine invariant, as at joint calling).
     meta_info.update({"status": "ok", "n_samples": len(samples),
-                      "n_cases": sum(1 for v in pheno.values() if v == 1),
-                      "n_controls": sum(1 for v in pheno.values() if v == 0),
+                      "n_cases": sum(1 for s in samples if pheno.get(s) == 1),
+                      "n_controls": sum(1 for s in samples if pheno.get(s) == 0),
                       "n_qualifying_variants": len(qual_variants),
                       "n_units": len(unit_names),
                       "n_gene_units": sum(1 for u in unit_names if u.startswith("gene:")),
                       "n_groupset_units": sum(1 for u in unit_names if u.startswith("group:")),
-                      "covariates": cov_cols, "n_pcs": npc})
+                      "covariates": cov_cols, "n_pcs": npc,
+                      "ancestry_pcs": pc_note, "n_pca_sites": n_pca_sites,
+                      "ancestry_pcs_used": bool(pcs_stable and avail_pc)})
     with open(os.path.join(a.outdir, "burden_meta.json"), "w") as fh:
         json.dump(meta_info, fh, indent=2)
     print(f"[build_burden_matrix] {len(qual_variants)} qualifying variants -> {len(unit_names)} units "
