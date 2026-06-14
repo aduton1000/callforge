@@ -13,7 +13,12 @@ groups) that drives the matching downstream steps.
 Immediate use: the 59-gene human malaria-susceptibility panel on African-ancestry
 DBS samples. It generalizes to any panel/cohort/organism by changing inputs + config.
 
-> **Build status:** Phases 1–4 complete and green end-to-end on the `test` profile —
+> **Build status:** ALL stages (0–15) implemented and **green end-to-end on the `test`
+> profile** (`-profile test,docker`, 88 processes). Operations guide: `docs/manual.md`.
+> Summary of what's machinery-proven on synthetic data vs what needs the real cohort,
+> plus the real-run checklist, is in `docs/decisions.md`.
+>
+> Stage detail:
 > Stage 0 (scaffold, resource discovery + genomic-scope gate, reference invariant),
 > Stages 1–5 (raw QC → fastp → bwa-mem2 → MarkDuplicates → BQSR(graceful) → HsMetrics +
 > mosdepth per-gene depth → per-sample QC gate with flag/quarantine scorecard),
@@ -29,8 +34,8 @@ DBS samples. It generalizes to any panel/cohort/organism by changing inputs + co
 > hap.py GIAB benchmarking restricted to the panel BED = on-target), and Stage 14
 > (rare+functional filter → collapse by gene & CaptureForge gene-set → gene-burden test
 > with covariates + ancestry PCs → QQ/Manhattan/λ; collapse engine for small-N/test,
-> regenie + SKAT-O wired for production; gated on phenotype). Phase 8 (MultiQC + cohort
-> dashboard + provenance) is the remaining stage; extension point in `subworkflows/callforge.nf`.
+> regenie + SKAT-O wired for production; gated on phenotype), and Stage 15 (MultiQC +
+> self-contained cohort QC dashboard with all captioned plots + provenance.json).
 
 ---
 
