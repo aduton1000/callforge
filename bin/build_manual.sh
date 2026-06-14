@@ -23,6 +23,16 @@ else
   echo "[build_manual] WARN: graphviz 'dot' not found; using existing DAG image" >&2
 fi
 
+# 1b. regenerate QC figures from results/ data with clean layout (no baked caption,
+#     so rotated x-labels are not overlapped). Skips quietly if results/ or the
+#     plotting deps (matplotlib/numpy, bcftools) are unavailable; committed figures
+#     then serve as the fallback.
+if [ -d "$HERE/../../results" ] && command -v python3 >/dev/null; then
+  python3 "$HERE/regen_figures.py" 2>/dev/null \
+    && echo "[build_manual] QC figures regenerated from results/" \
+    || echo "[build_manual] WARN: figure regen skipped; using committed figures" >&2
+fi
+
 # 2. PDF (xelatex; report class -> title page on its own page, TOC on the next)
 if "$PANDOC" --version >/dev/null 2>&1 && command -v xelatex >/dev/null 2>&1; then
   "$PANDOC" "$MD" \

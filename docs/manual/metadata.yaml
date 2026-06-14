@@ -3,6 +3,7 @@ title: "CallForge — User Manual"
 subtitle: "A targeted-capture germline analysis pipeline (FASTQ → annotated joint callset → burden)"
 author:
   - "Bright Adu"
+  - ""
   - "Genomics & Bioinformatics Core"
   - "Noguchi Memorial Institute for Medical Research"
   - "University of Ghana, Legon, Ghana"
@@ -19,6 +20,9 @@ header-includes:
   - \usepackage{titlesec}
   - \titleformat{\chapter}[hang]{\normalfont\Huge\bfseries}{}{0pt}{}
   - \titlespacing*{\chapter}{0pt}{-28pt}{16pt}
+  - \renewcommand{\and}{\\}
+  - \usepackage{array}
+  - \usepackage{ragged2e}
   - \usepackage{fvextra}
   - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere,commandchars=\\\{\}}
   - \usepackage{float}

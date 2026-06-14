@@ -83,24 +83,24 @@ feed in from the side.
 
 **Stage walkthrough (real inputs → outputs).**
 
-| # | Stage | Key tool(s) | Main output(s) under `results/` |
-|---|---|---|---|
-| 0 | Inputs & resource discovery | `validate_samplesheet`, `discover_resources`, `check_reference_invariant`, `ingest_captureforge` | `stage0_inputs/` (manifest, invariant, `gene_metadata.tsv`) |
-| 1 | Raw-read QC | FastQC | `stage1_rawqc/` |
-| 2 | Trimming | fastp | `stage2_trim/` |
-| 3 | Alignment | bwa-mem2 → samtools sort | `stage3_align/` |
-| 4 | Post-alignment | Picard MarkDuplicates, GATK BQSR, CollectHsMetrics, mosdepth | `stage4_postalign/` |
-| 5 | Per-sample QC gate | `qc_gate.py` | `stage5_qc_gate/` (`qc_pass.txt`, `qc_quarantine.txt`) |
-| 6 | SNV/indel joint calling | GATK HaplotypeCaller → GenomicsDBImport → GenotypeGVCFs | `stage6_calling/joint.vcf.gz` |
-| 7 | Hard-filtering | GATK VariantFiltration → MergeVcfs | `stage7_filter/joint.filtered.vcf.gz` |
-| 8 | CNV | CNVkit | `stage8_cnv/` (`cnv_calls.tsv`, callability) |
-| 9 | STR | ExpansionHunter | `stage9_str/` |
-| 10 | Paralog-aware | `paralog_flag.py` | `stage10_paralog/paralog.annotated.vcf.gz` |
-| 11 | Annotation | VEP + vcfanno + PhyloP | `stage11_annotation/annotated.vcf.gz`, `variants.flat.tsv` |
-| 12 | Cohort QC | somalier | `stage12_cohortqc/` |
-| 13 | GIAB validation | hap.py | `stage13_giab/` |
-| 14 | Burden / association | collapse / regenie / SKAT-O | `stage14_burden/burden_results.tsv` |
-| 15 | Reporting | MultiQC + dashboard + provenance | `stage15_report/` |
+| # | Stage | Key tool(s) | Output dir + key file(s) |
+|:--|:----------|:--------------------|:-----------------------------|
+| 0 | Inputs & resource discovery | validate_samplesheet, discover_resources, ingest_captureforge | stage0_inputs/ — manifest, invariant, gene_metadata.tsv |
+| 1 | Raw-read QC | FastQC | stage1_rawqc/ |
+| 2 | Trimming | fastp | stage2_trim/ |
+| 3 | Alignment | bwa-mem2, samtools sort | stage3_align/ |
+| 4 | Post-alignment | Picard MarkDuplicates, GATK BQSR, CollectHsMetrics, mosdepth | stage4_postalign/ — HsMetrics, mosdepth per-gene depth |
+| 5 | Per-sample QC gate | qc_gate.py | stage5_qc_gate/ — qc_pass.txt, qc_quarantine.txt |
+| 6 | SNV/indel joint calling | GATK HaplotypeCaller, GenomicsDBImport, GenotypeGVCFs | stage6_calling/ — joint.vcf.gz |
+| 7 | Hard-filtering | GATK VariantFiltration, MergeVcfs | stage7_filter/ — joint.filtered.vcf.gz |
+| 8 | CNV | CNVkit | stage8_cnv/ — cnv_calls.tsv (with callability) |
+| 9 | STR | ExpansionHunter | stage9_str/ — str_calls.tsv |
+| 10 | Paralog-aware | paralog_flag.py | stage10_paralog/ — paralog.annotated.vcf.gz |
+| 11 | Annotation | VEP, vcfanno, PhyloP | stage11_annotation/ — annotated.vcf.gz, variants.flat.tsv |
+| 12 | Cohort QC | somalier | stage12_cohortqc/ |
+| 13 | GIAB validation | hap.py | stage13_giab/ |
+| 14 | Burden / association | collapse / regenie / SKAT-O | stage14_burden/ — burden_results.tsv |
+| 15 | Reporting | MultiQC, dashboard, provenance | stage15_report/ |
 
 **Nextflow / profile model.** `main.nf` calls one subworkflow (`subworkflows/callforge.nf`)
 that wires modules in `modules/`. Behaviour is set by **profiles** composed on the command
@@ -130,8 +130,8 @@ use.
 curl -s https://get.nextflow.io | bash && sudo mv nextflow /usr/local/bin/
 # or: mamba create -n nextflow -c bioconda 'nextflow>=23.10'
 
-# 2. clone CallForge (it lives beside CaptureForge)
-cd ~/callforge
+# 2. obtain CallForge and enter the repository
+cd /path/to/callforge
 
 # 3. core environment (others build on demand)
 mamba env create -f env/callforge.yml
@@ -247,13 +247,13 @@ in (`--allow_download`).
 
 ## 6.1 The databases
 
-| Database | Provides | Stage(s) | Param | Scope requirement |
-|---|---|---|---|---|
-| **gnomAD** (AFR) | population allele frequencies, incl. African-ancestry `AF_afr` | 11 (vcfanno), 14 (rare filter) | `--gnomad_vcf`, `--gnomad_af_field AF_afr` | genome-wide; scope-gated |
-| **ClinVar** | clinical significance (`CLNSIG`, `CLNDN`, `CLNREVSTAT`, …) | 11 | `--clinvar_vcf` | genome-wide; scope-gated |
-| **dbSNP** | rsIDs (ID column) | 11 (rsID), 4 (BQSR known-site) | `--dbsnp_vcf`, `--known_sites` | genome-wide; scope-gated |
-| **VEP cache** | consequence, transcript, SIFT/PolyPhen, canonical/MANE | 11 | `--vep_cache`, `--vep_release` | species + assembly match |
-| **PhyloP** | conservation score (bigWig) | 11 | `--phylop_bw` | genome-wide |
+| Database | Provides | Stage(s) / param | Scope |
+|:----------|:----------------------------|:------------------------|:-------------|
+| gnomAD (AFR) | population allele frequencies, incl. African-ancestry AF_afr | 11 (vcfanno), 14 (rare filter); --gnomad_vcf, --gnomad_af_field | genome-wide; scope-gated |
+| ClinVar | clinical significance (CLNSIG, CLNDN, CLNREVSTAT, …) | 11; --clinvar_vcf | genome-wide; scope-gated |
+| dbSNP | rsIDs (ID column) | 11 (rsID), 4 (BQSR); --dbsnp_vcf, --known_sites | genome-wide; scope-gated |
+| VEP cache | consequence, transcript, SIFT/PolyPhen, canonical/MANE | 11; --vep_cache, --vep_release | species + assembly match |
+| PhyloP | conservation score (bigWig) | 11; --phylop_bw | genome-wide |
 
 **Namespacing.** gnomAD INFO fields are written back as `gnomAD_*` (e.g. `gnomAD_AF_afr`)
 so the **cohort's own `AF/AC/AN` are never overwritten** — the classic annotation
@@ -609,19 +609,19 @@ Paralog-aware flagging writes `INFO/PARALOG_GENE` and `INFO/PARALOG_CONF` into
 
 # 11. Outputs explained
 
-| Output | Path | Notes |
-|---|---|---|
-| Annotated joint VCF | `stage11_annotation/annotated.vcf.gz` | VEP CSQ + `gnomAD_*` + `ClinVar_*` + `PhyloP` + paralog flags |
-| Per-variant TSV | `stage11_annotation/variants.flat.tsv` | flattened; columns below |
-| Filtered joint VCF | `stage7_filter/joint.filtered.vcf.gz` | FILTER = PASS / hard-filter name |
-| CNV calls | `stage8_cnv/cnv_calls.tsv` | with `cnv_callable` + `confidence` |
-| STR genotypes | `stage9_str/str_calls.tsv` | repeat units, read support, call rate |
-| Paralog VCF | `stage10_paralog/paralog.annotated.vcf.gz` | `INFO/PARALOG_GENE`, `PARALOG_CONF` |
-| Burden results | `stage14_burden/burden_results.tsv` | `engine` column stamps the method |
-| Cohort QC | `stage12_cohortqc/cohort_qc.json` | relatedness, sex, missingness, PCA |
-| GIAB metrics | `stage13_giab/plots/giab_metrics.json` | precision/recall/F1, on-target |
-| Provenance | `stage15_report/provenance.json` | versions, resources, quarantine, PC gate |
-| Dashboard | `stage15_report/cohort_qc_dashboard.html` | all figures + tables |
+| Output | Location | File + notes |
+|:------------|:--------------|:--------------------------------------------|
+| Annotated joint VCF | stage11_annotation/ | annotated.vcf.gz — VEP CSQ + gnomAD_\* + ClinVar_\* + PhyloP + paralog flags |
+| Per-variant TSV | stage11_annotation/ | variants.flat.tsv — flattened (columns below) |
+| Filtered joint VCF | stage7_filter/ | joint.filtered.vcf.gz — FILTER = PASS or hard-filter name |
+| CNV calls | stage8_cnv/ | cnv_calls.tsv — with cnv_callable + confidence columns |
+| STR genotypes | stage9_str/ | str_calls.tsv — repeat units, read support, call rate |
+| Paralog VCF | stage10_paralog/ | paralog.annotated.vcf.gz — INFO/PARALOG_GENE, PARALOG_CONF |
+| Burden results | stage14_burden/ | burden_results.tsv — engine column stamps the method |
+| Cohort QC | stage12_cohortqc/ | cohort_qc.json — relatedness, sex, missingness, PCA |
+| GIAB metrics | stage13_giab/ | giab_metrics.json — precision/recall/F1, on-target |
+| Provenance | stage15_report/ | provenance.json — versions, resources, quarantine, PC gate |
+| Dashboard | stage15_report/ | cohort_qc_dashboard.html — all figures + tables |
 
 **Per-variant TSV columns** (`variants.flat.tsv`):
 `chrom, pos, ref, alt, rsID, filter, gene, consequence, gnomAD_AF, gnomAD_AF_afr,
