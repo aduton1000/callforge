@@ -103,7 +103,7 @@ else  # ---- panel mode: remote tabix-slice only the target regions ----
     hdr_done=0
     for c in $CHROMS; do
       url="${GNOMAD_BASE}/${ds}/gnomad.${ds}.v${GNOMAD_VER}.sites.chr${c}.vcf.bgz"
-      grep -qP "^chr${c}\t" "$chrbed" || continue
+      awk -v c="chr${c}" '$1==c{f=1} END{exit f?0:1}' "$chrbed" || continue   # portable (BSD grep lacks -P)
       log "-- slicing ${ds} chr${c} (remote tabix)"
       part="$OUTDIR/.${ds}.chr${c}.vcf"
       if [ $hdr_done -eq 0 ]; then tabix -h "$url" -R "$chrbed" > "$part" 2>>"$LOG" && hdr_done=1; \

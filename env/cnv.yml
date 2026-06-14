@@ -11,5 +11,6 @@ channels:
   - bioconda
 dependencies:
   - cnvkit=0.9.11
+  - bioconductor-dnacopy           # CNVkit 'cbs' segmentation (default); 'haar' is R-free
   - samtools=1.21
   - bcftools=1.21

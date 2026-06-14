@@ -13,14 +13,16 @@ groups) that drives the matching downstream steps.
 Immediate use: the 59-gene human malaria-susceptibility panel on African-ancestry
 DBS samples. It generalizes to any panel/cohort/organism by changing inputs + config.
 
-> **Build status:** Phases 1–3 complete and green end-to-end on the `test` profile —
+> **Build status:** Phases 1–4 complete and green end-to-end on the `test` profile —
 > Stage 0 (scaffold, resource discovery + genomic-scope gate, reference invariant),
 > Stages 1–5 (raw QC → fastp → bwa-mem2 → MarkDuplicates → BQSR(graceful) → HsMetrics +
-> mosdepth per-gene depth → per-sample QC gate with flag/quarantine scorecard), and
+> mosdepth per-gene depth → per-sample QC gate with flag/quarantine scorecard),
 > Stages 6–7 (HaplotypeCaller GVCF → GenomicsDBImport/CombineGVCFs → GenotypeGVCFs →
-> GATK hard-filters; DeepVariant+GLnexus as a container-only alternative). Quarantined
-> samples are verified excluded from joint calling. Phases 4–8 (CNV/STR/paralog →
-> annotation → cohort QC → GIAB → burden → reporting) are scaffolded with a marked
+> GATK hard-filters; DeepVariant+GLnexus as a container-only alternative; quarantined
+> samples verified excluded from joint calling), and Stages 8–10 (CNVkit with
+> CaptureForge callability labels propagated per call; ExpansionHunter STR genotyping;
+> paralog-aware flagging writing PARALOG_GENE + confidence into the VCF). Phases 5–8
+> (annotation → cohort QC → GIAB → burden → reporting) are scaffolded with a marked
 > extension point in `subworkflows/callforge.nf`.
 
 ---

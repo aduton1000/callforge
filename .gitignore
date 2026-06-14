@@ -46,8 +46,13 @@ vep_cache/
 *.vcf
 *.vcf.gz
 *.vcf.gz.tbi
+*.bgz
+*.bgz.tbi
 *.g.vcf.gz
 *.bcf
+gnomad*.tbi
+gnomad*.bgz*
+annotation_db/
 *.bed.gz
 *.bigWig
 *.bw
