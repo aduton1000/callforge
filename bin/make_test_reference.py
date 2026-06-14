@@ -334,7 +334,7 @@ def main():
         ab = {"A": "G", "G": "A", "C": "T", "T": "C", "N": "A"}.get(rb, "A")
         recs[(c, pos + 1)] = (rb, ab, "0.01")
     for (c, p, rb, ab) in spikes:                     # align to the called variants
-        recs[(c, p + 1)] = (rb, ab, "0.0123")
+        recs[(c, p + 1)] = (rb, ab, "0.005")          # rare AFR AF (< burden_af_max) -> qualifies
     with open(gnv, "w") as fh:
         fh.write("##fileformat=VCFv4.2\n##INFO=<ID=AF_afr,Number=A,Type=Float,Description=\"AFR AF\">\n")
         for name, seq in contigs.items():

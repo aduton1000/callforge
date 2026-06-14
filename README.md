@@ -26,8 +26,11 @@ DBS samples. It generalizes to any panel/cohort/organism by changing inputs + co
 > manifest-driven vcfanno for gnomAD-AFR AF / dbSNP / ClinVar + PhyloP, with
 > per-resource chr-reconciliation and a fail-loud annotation-landing check), and Stages
 > 12–13 (somalier relatedness + sex from off-target X/Y + ancestry PCA + missingness;
-> hap.py GIAB benchmarking restricted to the panel BED = on-target). Phases 7–8 (burden →
-> reporting) are scaffolded with a marked extension point in `subworkflows/callforge.nf`.
+> hap.py GIAB benchmarking restricted to the panel BED = on-target), and Stage 14
+> (rare+functional filter → collapse by gene & CaptureForge gene-set → gene-burden test
+> with covariates + ancestry PCs → QQ/Manhattan/λ; collapse engine for small-N/test,
+> regenie + SKAT-O wired for production; gated on phenotype). Phase 8 (MultiQC + cohort
+> dashboard + provenance) is the remaining stage; extension point in `subworkflows/callforge.nf`.
 
 ---
 
