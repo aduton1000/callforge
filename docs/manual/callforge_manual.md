@@ -203,8 +203,8 @@ S002,/data/fq/S002_R1.fastq.gz,/data/fq/S002_R2.fastq.gz,M,control,55,b1
 HG002,/data/fq/HG002_R1.fastq.gz,/data/fq/HG002_R2.fastq.gz,M,control,30,b2
 ```
 
-- `sample_id` unique; `fastq_1`/`fastq_2` are the paired-end reads (validated to exist and
-  differ). `sex` is `M/F/U` (free tokens normalized).
+- `sample_id` unique, `[A-Za-z0-9._-]`; `fastq_1`/`fastq_2` are the paired-end reads
+  (validated to exist and differ). `sex` is `M/F/U` (free tokens normalized).
 - **`phenotype` is required only for the burden layer** (case/control or quantitative).
   Without it, the pipeline runs through the annotated callset and **skips burden with a
   message** (`burden_meta.json` records `status: skipped_no_phenotype`).
@@ -212,6 +212,107 @@ HG002,/data/fq/HG002_R1.fastq.gz,/data/fq/HG002_R2.fastq.gz,M,control,30,b2
 
 Validation (`validate_samplesheet.py`) writes `samplesheet.valid.csv` and
 `samplesheet_summary.json` (with `burden_eligible`).
+
+**Where the sample sheet comes from.** It is **not** a CaptureForge output — the design
+pipeline never saw your samples or their phenotypes. The two halves of the sheet have two
+different origins:
+
+- `sample_id, fastq_1, fastq_2` come from your **sequencing core's demultiplexing**
+  (the FASTQ files and their names).
+- `sex, phenotype, covariate_*, batch` come from **your study / clinical metadata**.
+
+The **phenotype is irreducibly yours**: CallForge never invents, guesses, or defaults it.
+The helper below only *pairs FASTQs* and *joins metadata you supply*; anything it cannot
+resolve it **reports** rather than fills.
+
+**Three ways to build one.**
+
+*1 — Hand-author the CSV.* Write the schema above directly (absolute FASTQ paths). Fine
+for a handful of samples.
+
+*2 — Scaffold from a FASTQ directory* (`init_sample_sheet.py`, Mode A). Pairs R1/R2 by the
+usual Illumina conventions and infers `sample_id` from the filename, leaving the metadata
+columns blank for you to complete:
+
+```bash
+python3 bin/init_sample_sheet.py \
+    --fastq-dir /data/fq \
+    --out sample_sheet.csv
+# then open sample_sheet.csv and fill sex / phenotype / covariate_* / batch
+```
+
+*3 — Scaffold FASTQs **and** join a metadata CSV* (Mode B) — the complete sheet in one
+step. Provide a clinical CSV keyed on `sample_id` (override with `--metadata-id-col`):
+
+```bash
+python3 bin/init_sample_sheet.py \
+    --fastq-dir /data/fq \
+    --metadata clinical.csv \
+    --metadata-id-col sample_id \
+    --keep-extra-cols \
+    --out sample_sheet.csv
+```
+
+where `clinical.csv` is your own study table, e.g.:
+
+```text
+sample_id,sex,phenotype,covariate_age,batch
+S001,F,case,41,b1
+S002,M,control,55,b1
+```
+
+*Mode C — map your core's manifest.* If the core already gave you a
+`sample_id,fastq_1,fastq_2` export (a LIMS manifest), join metadata straight onto it
+without re-scanning a directory:
+
+```bash
+python3 bin/init_sample_sheet.py \
+    --fastq-csv lims_manifest.csv \
+    --metadata clinical.csv \
+    --out sample_sheet.csv
+```
+
+Useful flags: `--recursive` (walk sub-directories), `--r1-pattern`/`--r2-pattern` (custom
+read markers), `--id-regex` (custom `sample_id` extraction), `--strip-suffixes` /
+`--lowercase-ids` (reconcile minor ID naming differences), and `--overwrite`. The helper
+**only reads** the FASTQ/metadata files — it never moves or modifies them.
+
+**The reconciliation report.** Alongside the CSV the helper writes
+`<out>_report.txt` and prints it. It explicitly lists every join discrepancy so a broken
+sheet cannot slip through silently:
+
+- **orphan FASTQs** — an R1 or R2 with no mate (or no read marker at all);
+- **sequence without metadata** — FASTQ paired but no clinical row;
+- **metadata without sequence** — a clinical row with no FASTQ, *with the closest FASTQ
+  `sample_id` as a near-miss hint* (e.g. `S02 [closest FASTQ id: S2]`);
+- **duplicate `sample_id`** (in the FASTQs or the metadata);
+- **rows missing a required field** after assembly;
+- **blank phenotype** — warned (burden needs it) but **never auto-filled**;
+- a one-line summary: *N written, N fully-joined, N sequence-only, N metadata-only,
+  N orphan FASTQs*.
+
+The helper **exits non-zero** on a *hard* problem — a duplicate `sample_id`, a row missing
+a required field, or `fastq_1 == fastq_2` — and in that case writes **no** sheet. Soft
+problems (orphans, unmatched IDs, blank phenotype) print as warnings but do not fail, so
+you still get a sheet to finish by hand. Example report:
+
+```text
+CallForge sample-sheet reconciliation report (mode B)
+============================================================
+summary: 4 sample(s) written, 3 fully-joined, 1 sequence-only,
+         1 metadata-only, 0 orphan FASTQ(s)
+
+[SEQUENCE WITHOUT METADATA (FASTQ paired, no clinical row)] (1)
+  - LOWQC
+[METADATA WITHOUT SEQUENCE (clinical row, no FASTQ)] (1)
+  - S07  [closest FASTQ id: S2]
+[BLANK PHENOTYPE (burden needs it — fill manually, never auto-filled)] (1)
+  - LOWQC
+```
+
+Feed the result back through validation (`validate_samplesheet.py`, run automatically by
+Stage 0) before a full run. Remember: **phenotype is required only for the burden stage** —
+without it the pipeline still produces the annotated joint callset and simply skips burden.
 
 ## 5.2 CaptureForge handoff — `--target_bed` (+ metadata)
 
