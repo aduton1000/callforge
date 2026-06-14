@@ -1,0 +1,36 @@
+---
+title: "CallForge — User Manual"
+subtitle: "A targeted-capture germline analysis pipeline (FASTQ → annotated joint callset → burden)"
+author:
+  - "Bright Adu"
+  - "Genomics & Bioinformatics Core"
+  - "Noguchi Memorial Institute for Medical Research"
+  - "University of Ghana, Legon, Ghana"
+date: "2026-06-14"
+lang: en
+toc-title: "Contents"
+documentclass: report
+geometry: "margin=1in"
+fontsize: 11pt
+colorlinks: true
+linkcolor: RoyalBlue
+toccolor: RoyalBlue
+header-includes:
+  - \usepackage{titlesec}
+  - \titleformat{\chapter}[hang]{\normalfont\Huge\bfseries}{}{0pt}{}
+  - \titlespacing*{\chapter}{0pt}{-28pt}{16pt}
+  - \usepackage{fvextra}
+  - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere,commandchars=\\\{\}}
+  - \usepackage{float}
+  - \usepackage{caption}
+  - \captionsetup{font=small,labelfont=bf}
+  - \usepackage{amssymb}
+  - \usepackage{newunicodechar}
+  - \newunicodechar{→}{$\rightarrow$}
+  - \newunicodechar{↔}{$\leftrightarrow$}
+  - \newunicodechar{≥}{$\geq$}
+  - \newunicodechar{≤}{$\leq$}
+  - \newunicodechar{×}{$\times$}
+  - \newunicodechar{λ}{$\lambda$}
+  - \newunicodechar{·}{\textperiodcentered}
+---

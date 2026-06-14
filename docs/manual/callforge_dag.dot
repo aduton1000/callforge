@@ -1,0 +1,112 @@
+// CallForge pipeline DAG — color-coded by stage group, option-aware, with external inputs.
+// Render: dot -Tpng -Gdpi=200 callforge_dag.dot -o figures/callforge_dag.png
+//         dot -Tsvg callforge_dag.dot -o figures/callforge_dag.svg
+digraph CallForge {
+    rankdir=TB;
+    bgcolor="white";
+    labelloc="t";
+    fontname="Helvetica-Bold"; fontsize=20;
+    label="CallForge — targeted-capture germline analysis (FASTQ → annotated joint callset → burden)";
+    node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, margin="0.16,0.09"];
+    edge [color="#5f6368", arrowsize=0.8];
+
+    // ---- external inputs (cylinders) ----
+    node [shape=cylinder, style="filled", fillcolor="#fffde7", color="#f9a825"];
+    REF   [label="Reference\nno-alt GRCh38 primary\n(== CaptureForge design genome)"];
+    CFH   [label="CaptureForge handoff\nfinal_covered_targets.bed +\nper-gene metadata:\nCNV callability · STR catalog ·\nparalog flags · burden groups"];
+    DBS   [label="Annotation databases\ngnomAD-AFR · ClinVar · dbSNP\nVEP cache · PhyloP\n(discovered; genome-wide; scope-gated)"];
+    FQ    [label="Demultiplexed\npaired-end FASTQs\n+ sample sheet"];
+
+    // ---- main pipeline nodes, coloured by stage group ----
+    node [shape=box, style="rounded,filled"];
+
+    // inputs / resources
+    S0 [label="Stage 0 — Inputs & resource discovery\nvalidate_samplesheet · discover_resources\ncheck_reference_invariant · ingest_captureforge", fillcolor="#e8f0fe", color="#4285f4"];
+
+    // QC
+    S1 [label="Stage 1 — Raw-read QC\nFastQC", fillcolor="#fef7e0", color="#f9ab00"];
+    S2 [label="Stage 2 — Trimming\nfastp (DBS-appropriate)", fillcolor="#fef7e0", color="#f9ab00"];
+
+    // alignment
+    S3 [label="Stage 3 — Alignment\nbwa-mem2 → samtools sort", fillcolor="#e6f4ea", color="#34a853"];
+
+    // post-alignment
+    S4 [label="Stage 4 — Post-alignment\nPicard MarkDuplicates · GATK BQSR (graceful)\nPicard CollectHsMetrics · mosdepth per-gene depth", fillcolor="#d7f0e3", color="#137333"];
+
+    // QC gate
+    S5 [label="Stage 5 — Per-sample QC gate / quarantine\nqc_gate.py (depth · dup · on-target · contamination · sex)\nFLAG & QUARANTINE — never silently drop", fillcolor="#fce8e6", color="#ea4335"];
+
+    // calling + filter (+ alt engine)
+    S6 [label="Stage 6 — SNV/indel joint calling\nGATK HaplotypeCaller(GVCF) →\nGenomicsDBImport/CombineGVCFs → GenotypeGVCFs", fillcolor="#ede7f6", color="#673ab7"];
+    S6alt [label="ALT engine (--caller deepvariant)\nDeepVariant → GLnexus", fillcolor="#ede7f6", color="#673ab7", style="rounded,filled,dashed"];
+    S7 [label="Stage 7 — Hard-filtering\nGATK VariantFiltration (SNP/indel) → MergeVcfs", fillcolor="#ede7f6", color="#673ab7"];
+
+    // CNV / STR / paralog
+    S8 [label="Stage 8 — CNV\nCNVkit (PoN from QC-pass samples)\nlabelled by CaptureForge callability", fillcolor="#e0f7fa", color="#00acc1"];
+    S8alt [label="ALT (--cnv_caller gatk_gcnv)\nGATK gCNV", fillcolor="#e0f7fa", color="#00acc1", style="rounded,filled,dashed"];
+    S9 [label="Stage 9 — STR genotyping\nExpansionHunter (panel catalog)", fillcolor="#e0f7fa", color="#00acc1"];
+    S10 [label="Stage 10 — Paralog-aware flagging\nparalog_flag.py → INFO/PARALOG_GENE,PARALOG_CONF", fillcolor="#e0f7fa", color="#00acc1"];
+
+    // annotation
+    S11 [label="Stage 11 — Annotation\nVEP (consequence/SIFT/PolyPhen) +\nvcfanno (gnomAD-AFR/ClinVar/dbSNP) + PhyloP\nchr-reconciled · landing-verified", fillcolor="#fff3e0", color="#fb8c00"];
+
+    // cohort QC
+    S12 [label="Stage 12 — Cohort QC\nsomalier relatedness/sex + ancestry PCA + missingness", fillcolor="#f3e5f5", color="#8e24aa"];
+
+    // GIAB
+    S13 [label="Stage 13 — GIAB validation\nhap.py (precision/recall/F1)\nrestricted to panel BED (on-target)", fillcolor="#e8eaf6", color="#3949ab"];
+
+    // burden (+ engine options)
+    S14 [label="Stage 14 — Rare-variant burden\nrare+functional → collapse by gene & gene-set\n(covariates + ancestry-PC gate)", fillcolor="#fbe9e7", color="#d84315"];
+    S14e [label="engine: collapse (chi²) |\nregenie (Firth) | SKAT-O / STAAR", fillcolor="#fbe9e7", color="#d84315", style="rounded,filled,dashed"];
+
+    // reporting
+    S15 [label="Stage 15 — Reporting\nMultiQC + self-contained cohort QC dashboard\n+ provenance.json", fillcolor="#eceff1", color="#546e7a"];
+
+    // ---- main spine ----
+    FQ -> S0 -> S1 -> S2 -> S3 -> S4 -> S5;
+    S5 -> S6 [label="QC-PASS BAMs only", fontsize=9, fontcolor="#ea4335"];
+    S6 -> S7 -> S11;
+    S5 -> S8 [style=dotted]; S5 -> S9 [style=dotted]; S7 -> S10;
+    S8 -> S11 [style=invis]; S10 -> S11;
+    S11 -> S12 -> S13 -> S14 -> S15;
+
+    // alt-engine branches
+    S6 -> S6alt [dir=both, style=dashed, color="#673ab7", constraint=false, label="or", fontsize=9];
+    S8 -> S8alt [dir=both, style=dashed, color="#00acc1", constraint=false, label="or", fontsize=9];
+    S14 -> S14e [dir=both, style=dashed, color="#d84315", constraint=false];
+
+    // CNV/STR/paralog converge into reporting/annotation context
+    S8 -> S15 [style=dotted, constraint=false]; S9 -> S15 [style=dotted, constraint=false];
+
+    // ---- external inputs feeding stages ----
+    REF -> S0 [color="#f9a825"];
+    REF -> S6 [color="#f9a825", style=dashed, constraint=false];
+    CFH -> S0 [color="#f9a825"];
+    CFH -> S8 [color="#f9a825", style=dashed, constraint=false, label="callability", fontsize=8];
+    CFH -> S9 [color="#f9a825", style=dashed, constraint=false, label="STR catalog", fontsize=8];
+    CFH -> S10 [color="#f9a825", style=dashed, constraint=false, label="paralog flags", fontsize=8];
+    CFH -> S14 [color="#f9a825", style=dashed, constraint=false, label="burden groups", fontsize=8];
+    DBS -> S11 [color="#f9a825"];
+    DBS -> S4 [color="#f9a825", style=dashed, constraint=false, label="BQSR known-sites", fontsize=8];
+
+    // ---- legend ----
+    subgraph cluster_legend {
+        label="Stage groups"; fontsize=12; fontname="Helvetica-Bold"; style="rounded"; color="#bbbbbb";
+        node [shape=box, style="rounded,filled", fontsize=9, width=2.2];
+        L0 [label="Inputs / resources", fillcolor="#e8f0fe", color="#4285f4"];
+        L1 [label="Read QC / trimming", fillcolor="#fef7e0", color="#f9ab00"];
+        L2 [label="Alignment", fillcolor="#e6f4ea", color="#34a853"];
+        L3 [label="Post-alignment", fillcolor="#d7f0e3", color="#137333"];
+        L4 [label="QC gate / quarantine", fillcolor="#fce8e6", color="#ea4335"];
+        L5 [label="SNV/indel calling", fillcolor="#ede7f6", color="#673ab7"];
+        L6 [label="CNV / STR / paralog", fillcolor="#e0f7fa", color="#00acc1"];
+        L7 [label="Annotation", fillcolor="#fff3e0", color="#fb8c00"];
+        L8 [label="Cohort QC", fillcolor="#f3e5f5", color="#8e24aa"];
+        L9 [label="GIAB validation", fillcolor="#e8eaf6", color="#3949ab"];
+        L10 [label="Burden / association", fillcolor="#fbe9e7", color="#d84315"];
+        L11 [label="Reporting", fillcolor="#eceff1", color="#546e7a"];
+        L12 [label="External input (dashed = drives/labels)", fillcolor="#fffde7", color="#f9a825", shape=cylinder];
+        L0->L1->L2->L3->L4->L5->L6->L7->L8->L9->L10->L11->L12 [style=invis];
+    }
+}
