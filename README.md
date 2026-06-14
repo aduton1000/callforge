@@ -24,9 +24,10 @@ DBS samples. It generalizes to any panel/cohort/organism by changing inputs + co
 > paralog-aware flagging writing PARALOG_GENE + confidence into the VCF), and Stage 11
 > (VEP consequence/SIFT/PolyPhen/canonical via the official VEP container, then
 > manifest-driven vcfanno for gnomAD-AFR AF / dbSNP / ClinVar + PhyloP, with
-> per-resource chr-reconciliation and a fail-loud annotation-landing check). Phases 6–8
-> (cohort QC → GIAB → burden → reporting) are scaffolded with a marked extension point
-> in `subworkflows/callforge.nf`.
+> per-resource chr-reconciliation and a fail-loud annotation-landing check), and Stages
+> 12–13 (somalier relatedness + sex from off-target X/Y + ancestry PCA + missingness;
+> hap.py GIAB benchmarking restricted to the panel BED = on-target). Phases 7–8 (burden →
+> reporting) are scaffolded with a marked extension point in `subworkflows/callforge.nf`.
 
 ---
 

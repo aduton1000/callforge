@@ -135,6 +135,19 @@ def main():
     bed_rows.append(("test_HMOX1", 50, len(str_seq) - 50, "HMOX1|str"))  # wide target -> reads
     str_rows.append(("test_HMOX1", rep_s, rep_e, "HMOX1"))               # catalog at the repeat
 
+    # ---- synthetic X-chromosome OFF-TARGET region (contig "X") so somalier can
+    #      infer sex from X coverage/het — the autosomal-panel backstop, mimicking
+    #      the off-target reads a real run relies on. NOT added to the target BED. ----
+    xseq = "".join(run(["samtools", "faidx", a.genome, "X:100000000-100020000"]).splitlines()[1:]).upper()
+    xseq = xseq.replace("N", "A")
+    contigs["X"] = xseq
+    x_sites = []
+    for i in range(12):
+        pos = 1000 + i * 1500
+        if pos < len(xseq):
+            rb = xseq[pos]; ab = {"A": "G", "G": "A", "C": "T", "T": "C"}.get(rb, "G")
+            x_sites.append((pos, rb, ab))
+
     # ---- write mini genome + faidx ----
     genome_fa = os.path.join(refdir, "test_genome.fa")
     with open(genome_fa, "w") as fh:
@@ -205,7 +218,7 @@ def main():
     # ---- synthetic paired reads (deterministic tiling) ----
     # cnv_del: set of contigs to render at HALF coverage for this sample, so CNVkit
     # calls a deletion there (used to force a CFH breakpoint-blind CNV call).
-    def simulate(sample, spike=None, depth=None, cnv_del=None):
+    def simulate(sample, spike=None, depth=None, cnv_del=None, sex="F"):
         depth = depth or a.depth
         cnv_del = cnv_del or set()
         r1p = os.path.join(fqdir, f"{sample}_R1.fastq.gz")
@@ -213,6 +226,25 @@ def main():
         spike = spike or {}
         with gzip.open(r1p, "wt") as o1, gzip.open(r2p, "wt") as o2:
             rid = 0
+            # ---- X off-target reads: F = full depth + het at x_sites (2 haplotypes);
+            #      M = half depth + hom-ref -> somalier infers F vs M from het + depth ----
+            if "X" in contigs and x_sites:
+                xs = contigs["X"]
+                xdepth = depth if sex == "F" else max(1, depth // 2)
+                xstep = max(1, READLEN // max(1, xdepth) * 2)
+                xc = 0
+                for start in range(0, len(xs) - FRAG, xstep):
+                    frag = xs[start:start + FRAG]
+                    if sex == "F" and xc % 2 == 1:               # alt haplotype -> het
+                        fl = list(frag)
+                        for (p, rb, ab) in x_sites:
+                            if start <= p < start + FRAG:
+                                fl[p - start] = ab
+                        frag = "".join(fl)
+                    m1 = frag[:READLEN]; m2 = revcomp(frag[-READLEN:]); q = "I" * READLEN
+                    o1.write(f"@{sample}_X{xc}/1\n{m1}\n+\n{q}\n")
+                    o2.write(f"@{sample}_X{xc}/2\n{m2}\n+\n{q}\n")
+                    xc += 1
             for (c, s, e, name) in bed_rows:
                 seq = list(contigs[c])
                 for pos, alt in spike.get(c, []):
@@ -262,8 +294,8 @@ def main():
                 "S2":   ("F", "control", "52", "b2"),
                 "LOWQC":("F", "control", "39", "b2")}
         for sample, sp, dp, cd in samples:
-            r1, r2 = simulate(sample, sp, dp, cd)
             sx, ph, ag, bt = meta[sample]
+            r1, r2 = simulate(sample, sp, dp, cd, sx)
             fh.write(f"{sample},{os.path.abspath(r1)},{os.path.abspath(r2)},{sx},{ph},{ag},{bt}\n")
 
     # ---- GIAB-style truth (control spiked SNV) ----
@@ -275,7 +307,7 @@ def main():
         fh.write('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n')
         fh.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tCTRL\n")
         for (c, p, rb, ab) in sorted(spikes):
-            fh.write(f"{c}\t{p+1}\t.\t{rb}\t{ab}\t100\tPASS\t.\tGT\t0/1\n")
+            fh.write(f"{c}\t{p+1}\t.\t{rb}\t{ab}\t100\tPASS\t.\tGT\t1/1\n")  # reads are hom-alt
     run(["bgzip", "-f", truth_vcf])
     run(["tabix", "-p", "vcf", truth_vcf + ".gz"])
     with open(os.path.join(refdir, "test_truth.bed"), "w") as fh:
@@ -313,8 +345,31 @@ def main():
             fh.write(f"{c}\t{p}\t.\t{rb}\t{ab}\t.\t.\tAF_afr={afr}\n")
     run(["bgzip", "-f", gnv]); run(["tabix", "-p", "vcf", gnv + ".gz"])
 
+    # ---- somalier sites VCF (autosomal sites for relatedness + X sites for sex) ----
+    sites = {}
+    for (c, s, e, _) in bed_rows:                         # one covered site per contig
+        p = s + 60
+        if c not in [k[0] for k in sites] and p < len(contigs[c]):
+            rb = contigs[c][p]; ab = {"A": "G", "G": "A", "C": "T", "T": "C"}.get(rb, "G")
+            sites[(c, p + 1)] = (rb, ab)
+    for (c, p, rb, ab) in spikes:
+        sites[(c, p + 1)] = (rb, ab)
+    for (p, rb, ab) in x_sites:                           # X sites -> somalier sex
+        sites[("X", p + 1)] = (rb, ab)
+    sfile = os.path.join(refdir, "test_somalier_sites.vcf")
+    with open(sfile, "w") as fh:
+        fh.write("##fileformat=VCFv4.2\n")
+        for name, seq in contigs.items():
+            fh.write(f"##contig=<ID={name},length={len(seq)}>\n")
+        fh.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+        for (c, p) in sorted(sites, key=lambda k: (contig_idx[k[0]], k[1])):
+            rb, ab = sites[(c, p)]
+            fh.write(f"{c}\t{p}\t{c}_{p}\t{rb}\t{ab}\t.\t.\t.\n")
+    run(["bgzip", "-f", sfile]); run(["tabix", "-p", "vcf", sfile + ".gz"])
+
     print(f"[make_test] fixture ready in {a.outdir} "
-          f"({len(contigs)} contigs, {len(bed_rows)} targets, samples=CTRL,S1,S2)")
+          f"({len(contigs)} contigs incl X, {len(bed_rows)} targets, {len(sites)} somalier sites, "
+          f"samples=CTRL,S1,S2,LOWQC)")
 
 
 if __name__ == "__main__":
