@@ -49,9 +49,16 @@ arrives. Folded into the §11 completion report.
   genome-wide from off-target reads as the backstop.
 
 ## Deferred validations (do before production use)
-- **DeepVariant + GLnexus**: wired but untested locally (container-only). Run a
-  one-time native-Apptainer smoke-test at HPC deployment; flagged
-  "validate before production use".
+- **DeepVariant + GLnexus** (Stage 6 alt): wired but untested (container-only). Run a
+  one-time native-Apptainer smoke-test at HPC deployment.
+- **regenie** (Stage 14, production default) and **SKAT-O / STAAR** (Stage 14 R alt):
+  wired but NEVER executed (the synthetic cohort is too small). Exercise both on a
+  real/realistic cohort before production use. The tested engine is `collapse`
+  (CMC chi-square, small-N/default-free; engine name is stamped into burden_results.tsv).
+- **Ancestry-PC stability is now a GATE (implemented), not a note**: build_burden_matrix
+  drops the PCs and runs burden UNADJUSTED if there are too few PCA sites for the cohort
+  (recorded in provenance.json). On real data, confirm PC1/PC2 are stable before relying
+  on them as covariates; if not, the gate keeps the analysis unadjusted and says so.
 - **BQSR known-sites**: currently via `--known_sites` param; manifest-driven
   auto-use deferred (Phase 5 small enhancement).
 - **Genome-wide gnomAD panel-slice**: large/slow locally (gnomAD-genomes ~5.4 KB
