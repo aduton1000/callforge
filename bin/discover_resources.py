@@ -154,6 +154,26 @@ def indexed(path):
     return False
 
 
+# Standard 28-byte BGZF EOF marker — its ABSENCE means a truncated/partial bgzip
+# stream (a download that stopped mid-file), which a contig-overlap probe alone
+# could miss. Cheap O(1) integrity check that hardens the scope gate.
+BGZF_EOF = bytes([0x1f, 0x8b, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x06, 0x00,
+                  0x42, 0x43, 0x02, 0x00, 0x1b, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
+                  0x00, 0x00, 0x00, 0x00])
+
+
+def bgzf_intact(path):
+    try:
+        size = os.path.getsize(path)
+        if size < 28:
+            return False
+        with open(path, "rb") as fh:
+            fh.seek(-28, os.SEEK_END)
+            return fh.read(28) == BGZF_EOF
+    except OSError:
+        return False
+
+
 def validate_vcf(path, want_build, full_md5, need_afr=False, spans=None, scope_min=0.9):
     rec = {"path": path, "exists": os.path.isfile(path)}
     if not rec["exists"]:
@@ -166,6 +186,9 @@ def validate_vcf(path, want_build, full_md5, need_afr=False, spans=None, scope_m
     rec["non_empty"] = rec["size_bytes"] > 0
     notes = []
     status = "ok"
+    rec["bgzf_intact"] = bgzf_intact(path)
+    if not rec["bgzf_intact"]:
+        status = "truncated"; notes.append("missing BGZF EOF marker — file is truncated/partial; re-fetch")
     if not rec["indexed"]:
         status = "unindexed"; notes.append("no .tbi/.csi — run: tabix -p vcf")
     if rec["build"] not in (want_build, "unknown"):
@@ -353,9 +376,9 @@ def main():
     else:
         R["known_sites"] = {"status": "n/a", "files": []}
 
-    # Collect found-but-unfit annotation DBs (the silent-corruption case).
+    # Collect found-but-unfit/truncated annotation DBs (the silent-corruption case).
     unfit = {name: rec for name, rec in R.items()
-             if isinstance(rec, dict) and rec.get("status") == "unfit_scope"}
+             if isinstance(rec, dict) and rec.get("status") in ("unfit_scope", "truncated")}
     manifest["unfit_resources"] = sorted(unfit.keys())
 
     with open(a.out_json, "w") as fh:
