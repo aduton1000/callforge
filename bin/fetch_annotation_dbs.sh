@@ -33,6 +33,7 @@ DATASETS="${DATASETS:-genomes exomes}"     # which gnomAD sets; "genomes" alone 
 GNOMAD_VER="${GNOMAD_VER:-4.1}"
 CHROMS="${CHROMS:-1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X Y}"
 PANEL_BED="${PANEL_BED:-}"                 # required for MODE=panel (Ensembl-named, e.g. CaptureForge final_covered_targets.bed)
+MERGE_DIST="${MERGE_DIST:-1000}"           # panel mode: merge intervals within this gap before slicing (fewer HTTP requests)
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-30}"
 GNOMAD_BASE="https://storage.googleapis.com/gcp-public-data--gnomad/release/${GNOMAD_VER}/vcf"
 CLINVAR_URL="https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz"
@@ -97,6 +98,16 @@ else  # ---- panel mode: remote tabix-slice only the target regions ----
   # gnomAD is chr-prefixed; panel BED is Ensembl-named -> build a chr-prefixed BED for slicing.
   chrbed="$OUTDIR/.panel.chr.bed"
   awk 'BEGIN{OFS="\t"} {c=$1; if(c !~ /^chr/) c="chr"c; print c,$2,$3}' "$PANEL_BED" | sort -k1,1 -k2,2n > "$chrbed"
+  # MERGE nearby intervals so remote tabix issues a few large range-requests instead of
+  # one per interval. The panel's CNV bins sit ~50 bp apart, so an unmerged BED forces
+  # thousands of HTTP round-trips (request-latency bound, hours). Merging -> minutes.
+  # (Extra intronic gnomAD pulled in is harmless: vcfanno keeps only matching sites.)
+  if command -v bedtools >/dev/null 2>&1; then
+    bedtools merge -d "$MERGE_DIST" -i "$chrbed" > "${chrbed}.m" && mv "${chrbed}.m" "$chrbed"
+    log "panel BED merged to $(wc -l < "$chrbed" | tr -d ' ') ranges (-d $MERGE_DIST) for efficient remote slicing"
+  else
+    warn "bedtools not found — slicing unmerged intervals (may be very slow over the network)"
+  fi
   for ds in $DATASETS; do
     out="$OUTDIR/gnomad.${ds}.v${GNOMAD_VER}.panel.vcf.gz"
     : > "$OUTDIR/.${ds}.parts"
