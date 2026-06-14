@@ -113,17 +113,31 @@ else  # ---- panel mode: remote tabix-slice only the target regions ----
     : > "$OUTDIR/.${ds}.parts"
     hdr_done=0
     for c in $CHROMS; do
+      # Per-chromosome range subset (one small BED per chrom) for remote tabix.
+      cbed="$OUTDIR/.${ds}.chr${c}.bed"
+      awk -v c="chr${c}" '$1==c' "$chrbed" > "$cbed"
+      [ -s "$cbed" ] || { rm -f "$cbed"; continue; }
       url="${GNOMAD_BASE}/${ds}/gnomad.${ds}.v${GNOMAD_VER}.sites.chr${c}.vcf.bgz"
-      awk -v c="chr${c}" '$1==c{f=1} END{exit f?0:1}' "$chrbed" || continue   # portable (BSD grep lacks -P)
-      log "-- slicing ${ds} chr${c} (remote tabix)"
-      part="$OUTDIR/.${ds}.chr${c}.vcf"
-      if [ $hdr_done -eq 0 ]; then tabix -h "$url" -R "$chrbed" > "$part" 2>>"$LOG" && hdr_done=1; \
-      else tabix "$url" -R "$chrbed" > "$part" 2>>"$LOG"; fi || { log "  slice failed chr${c}"; FAILS+=("${ds}.chr${c}.slice"); continue; }
-      echo "$part" >> "$OUTDIR/.${ds}.parts"
+      part="$OUTDIR/.${ds}.chr${c}.vcf"; done_marker="$OUTDIR/.${ds}.chr${c}.done"
+      # Resume: skip a chromosome already sliced in a prior run.
+      if [ -f "$done_marker" ] && [ -s "$part" ]; then
+        log "-- ${ds} chr${c} already sliced (resume)"; echo "$part" >> "$OUTDIR/.${ds}.parts"; hdr_done=1; rm -f "$cbed"; continue
+      fi
+      log "-- slicing ${ds} chr${c} ($(wc -l < "$cbed" | tr -d ' ') ranges, remote tabix)"
+      ok=0
+      for attempt in 1 2 3 4 5; do
+        if [ $hdr_done -eq 0 ]; then tabix -h "$url" -R "$cbed" > "$part" 2>>"$LOG"; else tabix "$url" -R "$cbed" > "$part" 2>>"$LOG"; fi
+        if [ $? -eq 0 ]; then ok=1; break; fi
+        log "  chr${c} slice attempt ${attempt} failed (transient?); retry in 15s"; sleep 15
+      done
+      rm -f "$cbed"
+      if [ $ok -eq 1 ]; then touch "$done_marker"; hdr_done=1; echo "$part" >> "$OUTDIR/.${ds}.parts"
+      else log "  slice FAILED chr${c} after retries"; FAILS+=("${ds}.chr${c}.slice"); fi
     done
     cat $(cat "$OUTDIR/.${ds}.parts") | bgzip > "$out" && tabix -p vcf "$out" \
       && log "  wrote $out" || FAILS+=("$out")
-    rm -f $(cat "$OUTDIR/.${ds}.parts") "$OUTDIR/.${ds}.parts"
+    # Keep parts + .done markers if any failure (so a re-run resumes); else clean up.
+    if [ ${#FAILS[@]} -eq 0 ]; then rm -f $(cat "$OUTDIR/.${ds}.parts") "$OUTDIR/.${ds}.parts" "$OUTDIR"/.${ds}.chr*.done; fi
   done
   rm -f "$chrbed"
 fi
