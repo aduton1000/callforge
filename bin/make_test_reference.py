@@ -182,8 +182,11 @@ def main():
         json.dump(catalog, fh, indent=2)
 
     # ---- synthetic paired reads (deterministic tiling) ----
-    def simulate(sample, spike=None, depth=None):
+    # cnv_del: set of contigs to render at HALF coverage for this sample, so CNVkit
+    # calls a deletion there (used to force a CFH breakpoint-blind CNV call).
+    def simulate(sample, spike=None, depth=None, cnv_del=None):
         depth = depth or a.depth
+        cnv_del = cnv_del or set()
         r1p = os.path.join(fqdir, f"{sample}_R1.fastq.gz")
         r2p = os.path.join(fqdir, f"{sample}_R2.fastq.gz")
         spike = spike or {}
@@ -195,7 +198,8 @@ def main():
                     if s <= pos < e and pos < len(seq):
                         seq[pos] = alt
                 seq = "".join(seq)
-                step = max(1, READLEN // max(1, depth) * 2)
+                eff_depth = max(1, depth // 2) if c in cnv_del else depth
+                step = max(1, READLEN // max(1, eff_depth) * 2)
                 for start in range(max(0, s - 50), min(len(seq), e + 50) - FRAG, step):
                     frag = seq[start:start + FRAG]
                     if len(frag) < FRAG:
@@ -223,9 +227,11 @@ def main():
     for (c, p, rb, ab) in spikes:
         spike_map.setdefault(c, []).append((p, ab))
 
-    # (sample, spike, depth) — LOWQC is deliberately under-covered to exercise the
-    # QC gate's quarantine + prove it is excluded from joint calling downstream.
-    samples = [("CTRL", spike_map, 30), ("S1", spike_map, 30), ("S2", {}, 30), ("LOWQC", {}, 2)]
+    # (sample, spike, depth, cnv_del) — LOWQC is deliberately under-covered to
+    # exercise quarantine; S1 carries a half-coverage CFH deletion so a CFH
+    # (breakpoint-blind) CNV call appears and its low-confidence label is proven.
+    samples = [("CTRL", spike_map, 30, set()), ("S1", spike_map, 30, {"test_CFH"}),
+               ("S2", {}, 30, set()), ("LOWQC", {}, 2, set())]
     sheet = os.path.join(refdir, "..", "test_samplesheet.csv")
     sheet = os.path.normpath(sheet)
     with open(sheet, "w") as fh:
@@ -234,8 +240,8 @@ def main():
                 "S1":   ("M", "case", "45", "b1"),
                 "S2":   ("F", "control", "52", "b2"),
                 "LOWQC":("F", "control", "39", "b2")}
-        for sample, sp, dp in samples:
-            r1, r2 = simulate(sample, sp, dp)
+        for sample, sp, dp, cd in samples:
+            r1, r2 = simulate(sample, sp, dp, cd)
             sx, ph, ag, bt = meta[sample]
             fh.write(f"{sample},{os.path.abspath(r1)},{os.path.abspath(r2)},{sx},{ph},{ag},{bt}\n")
 
