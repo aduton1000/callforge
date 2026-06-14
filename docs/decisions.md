@@ -18,6 +18,17 @@ arrives. Folded into the §11 completion report.
 - **Resource fetch**: `bin/fetch_annotation_dbs.sh` in **panel-slice mode** behind
   the scope gate; full genome-wide download stays the documented manual option. No
   pipeline flag triggers a hundreds-of-GB download silently.
+- **Cohort QC: somalier + peddy → somalier-only.** peddy is dropped. Rationale:
+  somalier already covers relatedness + sex + (with a 1000G-labelled reference)
+  ancestry, is far more robust on sparse targeted-panel data, and needs no per-run
+  pedigree; peddy adds a heavy 1000G-background dependency for little extra signal
+  on a 59-gene panel. Revisit only if a pedigree-aware Mendelian-error report is
+  required.
+- **Scope gate hardened**: resource validation now also checks the BGZF EOF marker
+  (rejects truncated/partial `.bgz` downloads), so the gate validates DATA integrity,
+  not just contig overlap or index presence. "19/19 scope-fit" means every
+  panel-gene chromosome's data is present + intact (the panel spans 19 of 24 chroms;
+  chr10/18/21/X/Y have no panel genes, so are correctly absent from the slice).
 
 ## Quarantine / exclusion interlocks (proven on the test fixture)
 - Low-coverage `LOWQC` sample is quarantined by the QC gate and **excluded from
@@ -48,6 +59,12 @@ arrives. Folded into the §11 completion report.
 - **Genome-wide dbSNP**: NOT yet fetched locally. Before the real cohort, discover
   or fetch a genome-wide dbSNP (scope gate applies as for gnomAD/ClinVar). Needed in
   TWO places: vcfanno rsID annotation (Stage 11) AND BQSR known-sites (Stage 4).
+- **somalier sites**: supply the standard 1000G GRCh38 somalier sites VCF
+  (`--somalier_sites`) for the real run — only the test fixture's sites exist now.
+- **Ancestry PCs as burden covariates**: on a tight panel, ancestry/relatedness rely
+  on (largely off-target) genome-wide sites; PCs may be UNSTABLE. FIRST thing to check
+  on real data before using the PCs as regenie/SKAT covariates (Stage 14) — if
+  unstable, use self-reported ancestry or external-reference projection instead.
 
 ## Apple-Silicon / local-runner notes
 - The pinned `env/*.yml` are the production contract (linux/HPC native; Mac via
