@@ -1,0 +1,14 @@
+{
+  "restricted_to": "panel BED (on-target)",
+  "metrics": {
+    "SNP": {
+      "recall": 1.0,
+      "precision": 1.0,
+      "f1": 1.0,
+      "truth_total": 2.0,
+      "tp": 2.0,
+      "fn": 0.0,
+      "fp": 0.0
+    }
+  }
+}
