@@ -24,6 +24,9 @@ include { CNVKIT_BATCH; CNV_ANNOTATE; PLOT_CNV; BUILD_STR_CATALOG; EXPANSIONHUNT
 
 include { VEP; ANNOTATE_DBS; VERIFY_ANNOTATION; FLATTEN_TSV; PLOT_ANNOTATION } from '../modules/stage11_annotate.nf'
 
+include { SOMALIER_EXTRACT; SOMALIER_RELATE; COHORT_QC; EXTRACT_CONTROL; GIAB_HAPPY;
+          PLOT_GIAB } from '../modules/stage12_13_cohortqc_giab.nf'
+
 workflow CALLFORGE {
     take:
     ch_reads        // tuple(sample_id, fastq_1, fastq_2)
@@ -169,9 +172,33 @@ workflow CALLFORGE {
     FLATTEN_TSV( ANNOTATE_DBS.out.vcf )
     PLOT_ANNOTATION( FLATTEN_TSV.out.tsv, VERIFY_ANNOTATION.out.landing )
 
-    // ══════════════════════ PHASE 6+ EXTENSION POINT ═════════════════════════
-    // COHORT_QC (somalier/peddy/ancestry/relatedness) -> GIAB (hap.py) ->
-    // BURDEN( sheet_summary gates on phenotype ) -> REPORT.
+    // ── Stage 12 : cohort QC (somalier relatedness/sex + ancestry PCA + missingness) ──
+    if (params.somalier_sites) {
+        SOMALIER_EXTRACT( ch_pass_bams, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai,
+                          Channel.value(file(params.somalier_sites)),
+                          Channel.value(file(params.somalier_sites + '.tbi')) )
+        SOMALIER_RELATE( SOMALIER_EXTRACT.out.somalier.collect() )
+        COHORT_QC( HARD_FILTER.out.vcf, SOMALIER_RELATE.out.samples, SOMALIER_RELATE.out.pairs,
+                   VALIDATE_SAMPLESHEET.out.csv )
+    } else {
+        log.warn "No --somalier_sites: Stage 12 cohort QC (relatedness/ancestry/sex) skipped."
+    }
+
+    // ── Stage 13 : GIAB benchmarking (hap.py, restricted to the panel BED) ──
+    if (params.giab_control_id && params.giab_truth_vcf && params.giab_truth_bed) {
+        EXTRACT_CONTROL( HARD_FILTER.out.vcf )
+        GIAB_HAPPY( EXTRACT_CONTROL.out.vcf,
+                    Channel.value(file(params.giab_truth_vcf)),
+                    Channel.value(file(params.giab_truth_vcf + '.tbi')),
+                    Channel.value(file(params.giab_truth_bed)),
+                    ch_target_bed, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai )
+        PLOT_GIAB( GIAB_HAPPY.out.summary )
+    } else {
+        log.warn "No GIAB control/truth: Stage 13 benchmarking skipped (set giab_control_id + giab_truth_vcf/bed)."
+    }
+
+    // ══════════════════════ PHASE 7+ EXTENSION POINT ═════════════════════════
+    // BURDEN( annotated_vcf, sheet_summary gates on phenotype ) -> REPORT.
 
     emit:
     fasta         = PREPARE_REFERENCE.out.fasta

@@ -45,6 +45,9 @@ arrives. Folded into the §11 completion report.
   auto-use deferred (Phase 5 small enhancement).
 - **Genome-wide gnomAD panel-slice**: large/slow locally (gnomAD-genomes ~5.4 KB
   records); intended to be regenerated on HPC (fast network) for the real run.
+- **Genome-wide dbSNP**: NOT yet fetched locally. Before the real cohort, discover
+  or fetch a genome-wide dbSNP (scope gate applies as for gnomAD/ClinVar). Needed in
+  TWO places: vcfanno rsID annotation (Stage 11) AND BQSR known-sites (Stage 4).
 
 ## Apple-Silicon / local-runner notes
 - The pinned `env/*.yml` are the production contract (linux/HPC native; Mac via
