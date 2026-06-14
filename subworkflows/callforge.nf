@@ -22,6 +22,8 @@ include { HAPLOTYPECALLER; GENOMICSDB_IMPORT; GENOTYPE_GVCFS_DB; COMBINE_GENOTYP
 include { CNVKIT_BATCH; CNV_ANNOTATE; PLOT_CNV; BUILD_STR_CATALOG; EXPANSIONHUNTER;
           STR_SUMMARIZE; PLOT_STR; PARALOG_FLAG; PLOT_PARALOG } from '../modules/stage8_10_cnv_str_paralog.nf'
 
+include { VEP; ANNOTATE_DBS; VERIFY_ANNOTATION; FLATTEN_TSV; PLOT_ANNOTATION } from '../modules/stage11_annotate.nf'
+
 workflow CALLFORGE {
     take:
     ch_reads        // tuple(sample_id, fastq_1, fastq_2)
@@ -150,9 +152,26 @@ workflow CALLFORGE {
     PARALOG_FLAG( HARD_FILTER.out.vcf, ch_target_bed, ch_gene_meta )
     PLOT_PARALOG( PARALOG_FLAG.out.summary )
 
-    // ══════════════════════ PHASE 5+ EXTENSION POINT ═════════════════════════
-    // ANNOTATE( PARALOG_FLAG.out.vcf, DISCOVER_RESOURCES.out.manifest ) ->
-    // COHORT_QC -> GIAB -> BURDEN( sheet_summary gates on phenotype ) -> REPORT.
+    // ── Stage 11 : annotation (VEP + vcfanno, manifest-driven, chr-reconciled) ──
+    def ch_vep_aux = null
+    def ch_vep_aux_idx = null
+    if (params.vep_mode == 'gtf') {
+        ch_vep_aux     = Channel.value(file(params.gtf))
+        ch_vep_aux_idx = Channel.value(file(params.gtf + '.tbi'))
+    } else {
+        ch_vep_aux     = Channel.value(file(params.vep_cache ?: "${projectDir}/assets/NO_CACHE"))
+        ch_vep_aux_idx = Channel.value(file("${projectDir}/assets/NO_GTF"))
+    }
+    VEP( PARALOG_FLAG.out.vcf, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai,
+         ch_vep_aux, ch_vep_aux_idx )
+    ANNOTATE_DBS( VEP.out.vcf, PREPARE_REFERENCE.out.fai, DISCOVER_RESOURCES.out.manifest )
+    VERIFY_ANNOTATION( ANNOTATE_DBS.out.vcf, ANNOTATE_DBS.out.sources )
+    FLATTEN_TSV( ANNOTATE_DBS.out.vcf )
+    PLOT_ANNOTATION( FLATTEN_TSV.out.tsv, VERIFY_ANNOTATION.out.landing )
+
+    // ══════════════════════ PHASE 6+ EXTENSION POINT ═════════════════════════
+    // COHORT_QC (somalier/peddy/ancestry/relatedness) -> GIAB (hap.py) ->
+    // BURDEN( sheet_summary gates on phenotype ) -> REPORT.
 
     emit:
     fasta         = PREPARE_REFERENCE.out.fasta
@@ -174,4 +193,7 @@ workflow CALLFORGE {
     str_calls     = STR_SUMMARIZE.out.calls
     paralog_vcf   = PARALOG_FLAG.out.vcf
     paralog_summary = PARALOG_FLAG.out.summary
+    annotated_vcf   = ANNOTATE_DBS.out.vcf
+    variants_tsv    = FLATTEN_TSV.out.tsv
+    annotation_landing = VERIFY_ANNOTATION.out.landing
 }

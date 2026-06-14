@@ -166,6 +166,27 @@ def main():
     with open(test_metrics, "w") as fh:
         json.dump(metrics, fh, indent=2)
 
+    # ---- minimal GTF for VEP --gtf mode (test): one protein_coding transcript per
+    #      gene with exon+CDS over coding intervals -> VEP computes consequences offline ----
+    gtf_genes = defaultdict(list)
+    for (c, s, e, name) in bed_rows:
+        g, _, klass = name.partition("|")
+        gtf_genes[(c, g)].append((s, e, klass))
+    gtf_path = os.path.join(refdir, "test_genes.gtf")
+    with open(gtf_path, "w") as fh:
+        for (c, g), ivs in gtf_genes.items():
+            gs = min(s for s, e, k in ivs); ge = max(e for s, e, k in ivs)
+            tid = f"{g}_t1"
+            at = f'gene_id "{g}"; transcript_id "{tid}"; gene_name "{g}"; transcript_biotype "protein_coding";'
+            fh.write(f'{c}\tcallforge_test\tgene\t{gs+1}\t{ge}\t.\t+\t.\tgene_id "{g}"; gene_name "{g}"; gene_biotype "protein_coding";\n')
+            fh.write(f"{c}\tcallforge_test\ttranscript\t{gs+1}\t{ge}\t.\t+\t.\t{at}\n")
+            coding = sorted([(s, e) for s, e, k in ivs if k == "coding"]) or sorted([(s, e) for s, e, k in ivs])
+            for i, (s, e) in enumerate(coding, 1):
+                fh.write(f'{c}\tcallforge_test\texon\t{s+1}\t{e}\t.\t+\t.\t{at} exon_number "{i}";\n')
+                fh.write(f'{c}\tcallforge_test\tCDS\t{s+1}\t{e}\t.\t+\t0\t{at} exon_number "{i}";\n')
+    subprocess.run(f"sort -k1,1 -k4,4n '{gtf_path}' | bgzip > '{gtf_path}.gz'", shell=True, check=True)
+    run(["tabix", "-f", "-p", "gff", gtf_path + ".gz"])
+
     # ---- gene metadata via the real ingest script (BED + metrics) ----
     subprocess.run([sys.executable, a.ingest, "--bed", test_bed, "--metrics", test_metrics,
                     "--paralog-genes", "HP,CR1,CFH,CD209,CASP1",
@@ -267,21 +288,29 @@ def main():
     with open(os.path.join(vep, "info.txt"), "w") as fh:
         fh.write("# fake VEP cache fixture for CallForge test discovery\nassembly\tGRCh38\n")
     gnv = os.path.join(resdir, "gnomad_test.vcf")
-    # One record per target contig so the toy gnomAD is genomic-scope FIT (spans
-    # the whole test panel) — exercises the scope gate's pass path.
+    # Records at: (a) one per target contig -> genomic-scope FIT (spans the panel),
+    # and (b) the SPIKE positions with matching REF/ALT -> so gnomAD-AFR AF actually
+    # LANDS on the called variants (proves annotation reached the output, not missed).
+    contig_idx = {c: i for i, c in enumerate(contigs)}
+    recs = {}  # (contig,pos1) -> (rb, ab, afr)
     first_iv = {}
     for (c, s, e, _) in bed_rows:
         first_iv.setdefault(c, (s, e))
+    for c in contigs:
+        pos = first_iv.get(c, (10, 20))[0] + 5
+        rb = contigs[c][pos] if pos < len(contigs[c]) else "A"
+        ab = {"A": "G", "G": "A", "C": "T", "T": "C", "N": "A"}.get(rb, "A")
+        recs[(c, pos + 1)] = (rb, ab, "0.01")
+    for (c, p, rb, ab) in spikes:                     # align to the called variants
+        recs[(c, p + 1)] = (rb, ab, "0.0123")
     with open(gnv, "w") as fh:
         fh.write("##fileformat=VCFv4.2\n##INFO=<ID=AF_afr,Number=A,Type=Float,Description=\"AFR AF\">\n")
         for name, seq in contigs.items():
             fh.write(f"##contig=<ID={name},length={len(seq)}>\n")
         fh.write("##reference=GRCh38\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
-        for c in contigs:
-            pos = first_iv.get(c, (10, 20))[0] + 5
-            rb = contigs[c][pos] if pos < len(contigs[c]) else "A"
-            ab = {"A": "G", "G": "A", "C": "T", "T": "C", "N": "A"}.get(rb, "A")
-            fh.write(f"{c}\t{pos+1}\t.\t{rb}\t{ab}\t.\t.\tAF_afr=0.01\n")
+        for (c, p) in sorted(recs, key=lambda k: (contig_idx[k[0]], k[1])):
+            rb, ab, afr = recs[(c, p)]
+            fh.write(f"{c}\t{p}\t.\t{rb}\t{ab}\t.\t.\tAF_afr={afr}\n")
     run(["bgzip", "-f", gnv]); run(["tabix", "-p", "vcf", gnv + ".gz"])
 
     print(f"[make_test] fixture ready in {a.outdir} "

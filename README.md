@@ -21,9 +21,12 @@ DBS samples. It generalizes to any panel/cohort/organism by changing inputs + co
 > GATK hard-filters; DeepVariant+GLnexus as a container-only alternative; quarantined
 > samples verified excluded from joint calling), and Stages 8–10 (CNVkit with
 > CaptureForge callability labels propagated per call; ExpansionHunter STR genotyping;
-> paralog-aware flagging writing PARALOG_GENE + confidence into the VCF). Phases 5–8
-> (annotation → cohort QC → GIAB → burden → reporting) are scaffolded with a marked
-> extension point in `subworkflows/callforge.nf`.
+> paralog-aware flagging writing PARALOG_GENE + confidence into the VCF), and Stage 11
+> (VEP consequence/SIFT/PolyPhen/canonical via the official VEP container, then
+> manifest-driven vcfanno for gnomAD-AFR AF / dbSNP / ClinVar + PhyloP, with
+> per-resource chr-reconciliation and a fail-loud annotation-landing check). Phases 6–8
+> (cohort QC → GIAB → burden → reporting) are scaffolded with a marked extension point
+> in `subworkflows/callforge.nf`.
 
 ---
 
