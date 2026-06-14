@@ -1,0 +1,42 @@
+ancestry_pca	Genotype PCA of the cohort; on a tight panel few on-target sites give weak structure — real ancestry assignment uses somalier with the 1000G-labelled reference (off-target sites).
+annotation_landing	Fraction of callset variants that actually received each annotation (proof the annotation landed, not silently missed on a contig-name mismatch).
+burden_manhattan	Per-gene burden significance (-log10 p) with a Bonferroni line; collapses rare+functional variants per gene. Validity depends on N, phenotype definition, ancestry matching.
+burden_qq	QQ plot of gene-burden p-values vs uniform expectation; lambda = genomic inflation. Small-N synthetic results prove the machinery only — not valid association.
+cnv_callability	CNV-target genes coloured by CaptureForge callability: green=depth-callable, red=breakpoint-blind (low-confidence, e.g. CR1/CFH).
+cnv_calls_per_sample	Number of non-neutral copy-number calls per sample.
+cnv_copyratio	Per-target log2 copy ratio per sample; deviations from 0 indicate copy-number change.
+cohort_coverage_dist	Distribution of per-sample mean target depth across the cohort vs the gate threshold.
+cohort_sex_check	Declared vs somalier-inferred sex per sample (somalier infers from X/Y signal incl. off-target reads — the backstop for an autosomal panel with no X/Y targets).
+consequence_dist	Most-severe VEP consequence per variant across the callset.
+contamination	VerifyBamID2 FREEMIX contamination estimate per sample vs threshold (grey note if no SVD panel available).
+coverage_cumulative	Fraction of target bases covered at >= each depth, per sample (sensitivity for calling).
+coverage_uniformity	FOLD_80_BASE_PENALTY: fold extra sequencing for 80% of targets to reach the mean (1.0 = perfectly uniform).
+dp_dist	Per-site total depth (INFO/DP) distribution across the joint callset.
+dup_rate	Library duplication rate per sample (coordinate dedup; lower is better).
+filter_before_after	Variant counts before and after GATK hard-filtering, by type (sites retained).
+filter_pass_rate	Fraction of called variants passing the GATK hard-filters, by type and overall.
+filter_reasons	Number of sites rejected by each hard-filter criterion (which filter removed what).
+giab_f1	hap.py F1 per variant type vs GIAB truth, restricted to the panel BED (on-target).
+giab_precision_recall	hap.py precision & recall vs GIAB truth, restricted to the panel BED (on-target) (on-target). Synthetic test only proves the machinery; real numbers need a GIAB control + truth v4.2.1.
+gnomad_afr_af	Distribution of gnomAD African-ancestry allele frequencies; title shows the % of variants carrying an AFR AF (key for rare-variant filtering / burden).
+het_hom_per_sample	Heterozygous-to-homozygous-alt ratio per sample; extreme values flag sample-quality issues.
+input_readcounts	Raw paired-end read count per sample from the input FASTQs (sequencing yield).
+insert_size	Fragment insert-size distribution per sample (library size; capture efficiency).
+mapping_rate	Percent of reads mapped and properly paired per sample (alignment success).
+missingness	Per-sample fraction of no-call genotypes in the joint callset (sample quality).
+novel_vs_known	Variants with a dbSNP rsID (known) vs without (novel) — novelty rate.
+on_target_enrichment_fold	Fold-enrichment of on-target vs genome-average coverage (capture performance).
+on_target_enrichment_ontarget	Percent of bases on the capture target per sample (capture specificity).
+paralog_confidence	Variants in each paralog-ambiguous gene region, split into confident (uniquely callable, high MQ) vs flagged low-confidence (multimapping-ambiguous, low MQ).
+per_gene_depth	Mean coverage depth per target gene per sample; spot under-covered genes (e.g. CR1/CFH).
+phylop_dist	PhyloP conservation-score distribution; positive = conserved (likely functional).
+qc_scorecard	Per-sample QC checks (green=pass, red=fail, grey=not assessed); sample label shows the gate decision. Quarantined samples are kept and reported, not dropped.
+qual_dist	Variant-site QUAL distribution, PASS vs hard-filtered (call confidence).
+relatedness_heatmap	Pairwise somalier relatedness; synthetic test samples are near-identical so values run high (machinery proven) — a real cohort shows true relatedness structure.
+resource_availability	Annotation/known-sites resources discovered locally; orange = present but needs indexing/build check, red = missing (stage will skip gracefully).
+sex_check	Declared vs inferred sex per sample (grey note if the panel has no X/Y targets to infer from).
+str_allele_sizes	Distribution of genotyped repeat-unit counts (allele sizes) per STR locus.
+str_call_rate	Fraction of samples successfully genotyped at each STR locus (call rate).
+str_read_support	Spanning-read support per sample at each STR locus (genotype confidence).
+titv_per_sample	Transition/transversion ratio per sample; whole-exome ~3.0, smaller panels vary (calling quality).
+variants_per_sample	Per-sample count of non-reference genotypes in the joint callset (calling yield).
