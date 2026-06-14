@@ -27,6 +27,9 @@ include { VEP; ANNOTATE_DBS; VERIFY_ANNOTATION; FLATTEN_TSV; PLOT_ANNOTATION } f
 include { SOMALIER_EXTRACT; SOMALIER_RELATE; COHORT_QC; EXTRACT_CONTROL; GIAB_HAPPY;
           PLOT_GIAB } from '../modules/stage12_13_cohortqc_giab.nf'
 
+include { BURDEN_MATRIX; BURDEN_COLLAPSE; BURDEN_REGENIE; BURDEN_SKAT;
+          PLOT_BURDEN } from '../modules/stage14_burden.nf'
+
 workflow CALLFORGE {
     take:
     ch_reads        // tuple(sample_id, fastq_1, fastq_2)
@@ -197,8 +200,31 @@ workflow CALLFORGE {
         log.warn "No GIAB control/truth: Stage 13 benchmarking skipped (set giab_control_id + giab_truth_vcf/bed)."
     }
 
-    // ══════════════════════ PHASE 7+ EXTENSION POINT ═════════════════════════
-    // BURDEN( annotated_vcf, sheet_summary gates on phenotype ) -> REPORT.
+    // ── Stage 14 : rare-variant burden / association (gated on phenotype) ──
+    if (params.run_burden) {
+        def ch_cohortqc = params.somalier_sites ? COHORT_QC.out.json
+                                                : Channel.value(file("${projectDir}/assets/NO_CACHE"))
+        BURDEN_MATRIX( ANNOTATE_DBS.out.vcf, INGEST_CAPTUREFORGE.out.tsv,
+                       VALIDATE_SAMPLESHEET.out.csv, ch_cohortqc )
+        def ch_bres
+        def ch_bsum
+        if (params.burden_engine == 'collapse') {
+            BURDEN_COLLAPSE( BURDEN_MATRIX.out.matrix, BURDEN_MATRIX.out.pheno )
+            ch_bres = BURDEN_COLLAPSE.out.results; ch_bsum = BURDEN_COLLAPSE.out.summary
+        } else if (params.burden_engine == 'skat') {
+            BURDEN_SKAT( BURDEN_MATRIX.out.genotypes, BURDEN_MATRIX.out.pheno, BURDEN_MATRIX.out.covar )
+            ch_bres = BURDEN_SKAT.out.results; ch_bsum = BURDEN_SKAT.out.summary
+        } else {
+            BURDEN_REGENIE( BURDEN_MATRIX.out.genotypes, BURDEN_MATRIX.out.pheno, BURDEN_MATRIX.out.covar )
+            ch_bres = BURDEN_REGENIE.out.results; ch_bsum = BURDEN_REGENIE.out.summary
+        }
+        PLOT_BURDEN( ch_bres, ch_bsum )
+    } else {
+        log.warn "run_burden=false: Stage 14 burden/association skipped."
+    }
+
+    // ══════════════════════ PHASE 8 EXTENSION POINT ══════════════════════════
+    // REPORT: MultiQC + self-contained cohort QC dashboard + provenance.json.
 
     emit:
     fasta         = PREPARE_REFERENCE.out.fasta
