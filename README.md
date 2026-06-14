@@ -13,10 +13,12 @@ groups) that drives the matching downstream steps.
 Immediate use: the 59-gene human malaria-susceptibility panel on African-ancestry
 DBS samples. It generalizes to any panel/cohort/organism by changing inputs + config.
 
-> **Build status:** Phase 1 complete (scaffold, envs, profiles, resource discovery,
-> reference invariant) and green end-to-end on the `test` profile. Phases 2–8
-> (align→QC gate→calling→CNV/STR/paralog→annotation→cohort QC→GIAB→burden→reporting)
-> are scaffolded with a marked extension point in `subworkflows/callforge.nf`.
+> **Build status:** Phases 1–2 complete and green end-to-end on the `test` profile —
+> Stage 0 (scaffold, resource discovery + genomic-scope gate, reference invariant) and
+> Stages 1–5 (raw QC → fastp trim → bwa-mem2 align → MarkDuplicates → BQSR(graceful) →
+> CollectHsMetrics + mosdepth per-gene depth → per-sample QC gate with flag/quarantine
+> scorecard). Phases 3–8 (calling→CNV/STR/paralog→annotation→cohort QC→GIAB→burden→
+> reporting) are scaffolded with a marked extension point in `subworkflows/callforge.nf`.
 
 ---
 

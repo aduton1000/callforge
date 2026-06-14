@@ -20,7 +20,7 @@ def save(fig, outdir, stem, caption):
     for ext in ("png", "svg"):
         fig.savefig(os.path.join(outdir, f"{stem}.{ext}"), bbox_inches="tight", dpi=140)
     plt.close(fig)
-    with open(os.path.join(outdir, "captions.tsv"), "a") as fh:
+    with open(os.path.join(outdir, os.environ.get("CALLFORGE_CAPTIONS", "captions.tsv")), "a") as fh:
         fh.write(f"{stem}\t{caption}\n")
 
 
