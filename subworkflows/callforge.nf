@@ -19,6 +19,9 @@ include { HAPLOTYPECALLER; GENOMICSDB_IMPORT; GENOTYPE_GVCFS_DB; COMBINE_GENOTYP
           HARD_FILTER; CALLSET_STATS; FILTER_SUMMARY; PLOT_CALLING_QC; PLOT_FILTER_QC;
           DEEPVARIANT; GLNEXUS } from '../modules/stage6_7_calling.nf'
 
+include { CNVKIT_BATCH; CNV_ANNOTATE; PLOT_CNV; BUILD_STR_CATALOG; EXPANSIONHUNTER;
+          STR_SUMMARIZE; PLOT_STR; PARALOG_FLAG; PLOT_PARALOG } from '../modules/stage8_10_cnv_str_paralog.nf'
+
 workflow CALLFORGE {
     take:
     ch_reads        // tuple(sample_id, fastq_1, fastq_2)
@@ -120,10 +123,36 @@ workflow CALLFORGE {
     PLOT_CALLING_QC( CALLSET_STATS.out.json, FILTER_SUMMARY.out.qualdp )
     PLOT_FILTER_QC( FILTER_SUMMARY.out.counts )
 
-    // ══════════════════════ PHASE 4+ EXTENSION POINT ═════════════════════════
-    // CNV (cnvkit/gatk_gcnv, callability from CF metadata) / STR (ExpansionHunter)
-    // / PARALOG flagging -> ANNOTATE( DISCOVER_RESOURCES.out.manifest ) -> COHORT_QC
-    // -> GIAB -> BURDEN( sheet_summary gates on phenotype ) -> REPORT.
+    // ── Stages 8-10 : CNV + STR + paralog-aware (CaptureForge-metadata driven) ──
+    ch_gene_meta = INGEST_CAPTUREFORGE.out.tsv
+    ch_pass_bam_files = ch_pass_bams.map { s, b, i -> b }.collect()
+    ch_pass_bai_files = ch_pass_bams.map { s, b, i -> i }.collect()
+
+    // Stage 8 : CNV (CNVkit) with CaptureForge callability labels propagated
+    CNVKIT_BATCH( ch_pass_bam_files, ch_pass_bai_files, ch_target_bed,
+                  PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai )
+    CNV_ANNOTATE( CNVKIT_BATCH.out.cns, CNVKIT_BATCH.out.cnr, ch_target_bed, ch_gene_meta )
+    PLOT_CNV( CNV_ANNOTATE.out.copyratio, CNV_ANNOTATE.out.summary, ch_gene_meta )
+
+    // Stage 9 : STR (ExpansionHunter) — curated catalog if supplied, else built
+    def ch_str_catalog
+    if (params.str_catalog) {
+        ch_str_catalog = Channel.value(file(params.str_catalog))
+    } else {
+        BUILD_STR_CATALOG( ch_gene_meta )
+        ch_str_catalog = BUILD_STR_CATALOG.out.catalog
+    }
+    EXPANSIONHUNTER( ch_pass_bams, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai, ch_str_catalog )
+    STR_SUMMARIZE( EXPANSIONHUNTER.out.json.collect() )
+    PLOT_STR( STR_SUMMARIZE.out.calls, STR_SUMMARIZE.out.summary )
+
+    // Stage 10 : paralog-aware flagging on the filtered callset
+    PARALOG_FLAG( HARD_FILTER.out.vcf, ch_target_bed, ch_gene_meta )
+    PLOT_PARALOG( PARALOG_FLAG.out.summary )
+
+    // ══════════════════════ PHASE 5+ EXTENSION POINT ═════════════════════════
+    // ANNOTATE( PARALOG_FLAG.out.vcf, DISCOVER_RESOURCES.out.manifest ) ->
+    // COHORT_QC -> GIAB -> BURDEN( sheet_summary gates on phenotype ) -> REPORT.
 
     emit:
     fasta         = PREPARE_REFERENCE.out.fasta
@@ -140,4 +169,9 @@ workflow CALLFORGE {
     filtered_vcf  = HARD_FILTER.out.vcf
     calling_stats = CALLSET_STATS.out.json
     filter_counts = FILTER_SUMMARY.out.counts
+    cnv_calls     = CNV_ANNOTATE.out.calls
+    cnv_summary   = CNV_ANNOTATE.out.summary
+    str_calls     = STR_SUMMARIZE.out.calls
+    paralog_vcf   = PARALOG_FLAG.out.vcf
+    paralog_summary = PARALOG_FLAG.out.summary
 }

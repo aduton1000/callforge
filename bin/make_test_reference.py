@@ -121,6 +121,20 @@ def main():
     if not contigs:
         sys.exit("[make_test] ERROR: no usable loci extracted")
 
+    # ---- synthetic STR locus (gene HMOX1, (GT)n) so ExpansionHunter has a real
+    #      repeat to genotype; flanks are revcomp'd real sequence (unique mapping).
+    #      Flanks must exceed EH's ~1000 bp extension window each side. ----
+    src = max(contigs.values(), key=len)
+    flank = 1100
+    if len(src) < 2 * flank:
+        src = (src * (2 * flank // max(1, len(src)) + 1))       # tile up if needed
+    n_gt = 20
+    str_seq = revcomp(src[:flank]) + ("GT" * n_gt) + revcomp(src[flank:2 * flank])
+    contigs["test_HMOX1"] = str_seq
+    rep_s, rep_e = flank, flank + 2 * n_gt                       # precise repeat coords
+    bed_rows.append(("test_HMOX1", 50, len(str_seq) - 50, "HMOX1|str"))  # wide target -> reads
+    str_rows.append(("test_HMOX1", rep_s, rep_e, "HMOX1"))               # catalog at the repeat
+
     # ---- write mini genome + faidx ----
     genome_fa = os.path.join(refdir, "test_genome.fa")
     with open(genome_fa, "w") as fh:
@@ -136,21 +150,36 @@ def main():
         for (c, s, e, name) in sorted(bed_rows):
             fh.write(f"{c}\t{s}\t{e}\t{name}\t0\t+\n")
 
-    # ---- gene metadata via the real ingest script (BED-only) ----
-    subprocess.run([sys.executable, a.ingest, "--bed", test_bed,
+    # ---- CaptureForge-style metrics.json: CNV callability so the test exercises
+    #      callability labelling (CFH/CR1 breakpoint-blind; others depth-callable) ----
+    cnv_genes = sorted({n.split("|")[0] for (c, s, e, n) in bed_rows if n.split("|")[1] == "cnv"})
+    metrics = {"cnv_bin_spacing": {}, "qc_gates": {"low_coverage_genes": []}}
+    for g in cnv_genes:
+        callable_ = g not in ("CFH", "CR1")
+        metrics["cnv_bin_spacing"][g] = {
+            "n_bins": 200, "median_gap": 52,
+            "max_gap": 18000 if not callable_ else 700,
+            "cv_gap": 4.4 if not callable_ else 1.1, "depth_callable": callable_}
+        if not callable_:
+            metrics["qc_gates"]["low_coverage_genes"].append({"gene": g, "raw_cov": 0.42})
+    test_metrics = os.path.join(refdir, "test_metrics.json")
+    with open(test_metrics, "w") as fh:
+        json.dump(metrics, fh, indent=2)
+
+    # ---- gene metadata via the real ingest script (BED + metrics) ----
+    subprocess.run([sys.executable, a.ingest, "--bed", test_bed, "--metrics", test_metrics,
                     "--paralog-genes", "HP,CR1,CFH,CD209,CASP1",
                     "--out-tsv", os.path.join(refdir, "test_gene_metadata.tsv"),
                     "--out-json", os.path.join(refdir, "test_gene_metadata.json")], check=True)
 
-    # ---- ExpansionHunter catalog for STR targets ----
-    catalog = []
-    for (c, s, e, gene) in str_rows:
-        catalog.append({"LocusId": gene, "LocusStructure": "(GT)*",
-                        "ReferenceRegion": f"{c}:{s}-{e}", "VariantType": "Repeat"})
+    # ---- ExpansionHunter catalog (curated) ----
+    # Only the synthetic HMOX1 (GT)n is a genuine repeat locus; other str-class
+    # targets are not EH loci (the real run supplies a curated catalog for
+    # PIEZO1 E756del / HMOX1 (GT)n / SLC11A1 (GT)n via --str_catalog).
+    catalog = [{"LocusId": g, "LocusStructure": "(GT)*", "ReferenceRegion": f"{c}:{s}-{e}",
+                "VariantType": "Repeat"} for (c, s, e, g) in str_rows if c == "test_HMOX1"]
     with open(os.path.join(refdir, "test_str_catalog.json"), "w") as fh:
-        json.dump(catalog or [{"LocusId": "none", "LocusStructure": "(GT)*",
-                               "ReferenceRegion": f"{list(contigs)[0]}:1-2",
-                               "VariantType": "Repeat"}], fh, indent=2)
+        json.dump(catalog, fh, indent=2)
 
     # ---- synthetic paired reads (deterministic tiling) ----
     def simulate(sample, spike=None, depth=None):
@@ -179,17 +208,24 @@ def main():
                     rid += 1
         return r1p, r2p
 
-    # control gets a couple of spiked SNVs -> truth set
-    truth_contig = bed_rows[0][0]
-    truth_s = bed_rows[0][1]
-    spike_pos = truth_s + 20
-    ref_base = contigs[truth_contig][spike_pos]
-    alt_base = {"A": "G", "G": "A", "C": "T", "T": "C", "N": "A"}[ref_base]
-    spike = {truth_contig: [(spike_pos, alt_base)]}
+    # spiked SNVs (carried by CTRL + S1): one in a non-paralog gene (truth) and one
+    # in a CFH paralog region so paralog-aware flagging has a variant to label.
+    def make_spike(contig, pos):
+        rb = contigs[contig][pos]
+        ab = {"A": "G", "G": "A", "C": "T", "T": "C", "N": "A"}.get(rb, "A")
+        return (contig, pos, rb, ab)
+    spikes = [make_spike(bed_rows[0][0], bed_rows[0][1] + 20)]
+    cfh_rows = [(c, s, e) for (c, s, e, n) in bed_rows if c == "test_CFH"]
+    if cfh_rows:
+        c, s, e = max(cfh_rows, key=lambda r: r[2] - r[1])     # longest CFH row (gets reads)
+        spikes.append(make_spike(c, s + 50))
+    spike_map = {}
+    for (c, p, rb, ab) in spikes:
+        spike_map.setdefault(c, []).append((p, ab))
 
     # (sample, spike, depth) — LOWQC is deliberately under-covered to exercise the
     # QC gate's quarantine + prove it is excluded from joint calling downstream.
-    samples = [("CTRL", spike, 30), ("S1", spike, 30), ("S2", {}, 30), ("LOWQC", {}, 2)]
+    samples = [("CTRL", spike_map, 30), ("S1", spike_map, 30), ("S2", {}, 30), ("LOWQC", {}, 2)]
     sheet = os.path.join(refdir, "..", "test_samplesheet.csv")
     sheet = os.path.normpath(sheet)
     with open(sheet, "w") as fh:
@@ -211,7 +247,8 @@ def main():
             fh.write(f"##contig=<ID={name},length={len(seq)}>\n")
         fh.write('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n')
         fh.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tCTRL\n")
-        fh.write(f"{truth_contig}\t{spike_pos+1}\t.\t{ref_base}\t{alt_base}\t100\tPASS\t.\tGT\t0/1\n")
+        for (c, p, rb, ab) in sorted(spikes):
+            fh.write(f"{c}\t{p+1}\t.\t{rb}\t{ab}\t100\tPASS\t.\tGT\t0/1\n")
     run(["bgzip", "-f", truth_vcf])
     run(["tabix", "-p", "vcf", truth_vcf + ".gz"])
     with open(os.path.join(refdir, "test_truth.bed"), "w") as fh:

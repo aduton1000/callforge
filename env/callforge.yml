@@ -35,6 +35,8 @@ dependencies:
   - bcftools=1.21
   - bedtools=2.31.1
   - mosdepth=0.3.8            # fast per-target / per-gene depth
+                              # (native osx-arm64: use >=0.3.11 — 0.3.8 has no arm64
+                              #  build; or create the env via CONDA_SUBDIR=osx-64)
   # ---- aggregate reporting ----
   - multiqc=1.25
   # ---- python + plotting / QC layer ----
