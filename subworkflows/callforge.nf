@@ -25,7 +25,7 @@ workflow CALLFORGE {
     PREPARE_REFERENCE( ch_genome )
     REFERENCE_INVARIANT( PREPARE_REFERENCE.out.fai, ch_target_bed )
 
-    DISCOVER_RESOURCES( Channel.value(params.resource_dirs) )
+    DISCOVER_RESOURCES( Channel.value(params.resource_dirs), ch_target_bed )
 
     INGEST_CAPTUREFORGE( ch_target_bed, ch_cf_metrics, ch_cf_baits )
 
