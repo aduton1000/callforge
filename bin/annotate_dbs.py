@@ -78,6 +78,16 @@ def rename(vcf, mapfile, out):
     return out
 
 
+def invert_map(mapfile, out):
+    """Invert a bcftools rename map (a\\tb -> b\\ta) for the round-trip back."""
+    with open(mapfile) as fh, open(out, "w") as o:
+        for ln in fh:
+            p = ln.rstrip("\n").split("\t")
+            if len(p) == 2:
+                o.write(f"{p[1]}\t{p[0]}\n")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--vcf", required=True)
@@ -108,13 +118,13 @@ def main():
     work = []  # cleanup
 
     def ensure_style(vcf_in, target_style, tag):
-        """Return a vcf whose contigs are in target_style (rename if needed)."""
+        """Return (vcf in target_style, renamed?, forward_map) — rename if needed."""
         if qstyle == target_style:
-            return vcf_in, False
+            return vcf_in, False, None
         mp = build_rename_map(a.fai, target_style, os.path.join(od, f".rn_{tag}.txt"))
         out = os.path.join(od, f".q_{tag}.vcf.gz")
         rename(vcf_in, mp, out); work.append(out)
-        return out, True
+        return out, True, mp
 
     # ---- gnomAD + ClinVar via vcfanno, grouped by their style ----
     # Build per-style vcfanno configs.
@@ -155,7 +165,7 @@ def main():
 
         if not cfg_blocks and "dbsnp" not in members:
             continue
-        qstyled, renamed = ensure_style(cur, target_style, target_style)
+        qstyled, renamed, fwd_map = ensure_style(cur, target_style, target_style)
 
         # vcfanno (gnomad/clinvar)
         if cfg_blocks:
@@ -177,11 +187,11 @@ def main():
             sh(["tabix", "-f", "-p", "vcf", outd]); work.append(outd)
             qstyled = outd; applied["sources_applied"].append("dbsnp")
 
-        # rename back to query style if we renamed
+        # rename back to the original query style (invert the forward map)
         if renamed:
-            mp = build_rename_map(a.fai, qstyle, os.path.join(od, f".rnback_{target_style}.txt"))
+            backmap = invert_map(fwd_map, os.path.join(od, f".rnback_{target_style}.txt"))
             outb = os.path.join(od, f".back_{target_style}.vcf.gz")
-            rename(qstyled, mp, outb); work.append(outb)
+            rename(qstyled, backmap, outb); work.append(outb)
             cur = outb
         else:
             cur = qstyled
