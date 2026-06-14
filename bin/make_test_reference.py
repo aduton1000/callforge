@@ -153,7 +153,8 @@ def main():
                                "VariantType": "Repeat"}], fh, indent=2)
 
     # ---- synthetic paired reads (deterministic tiling) ----
-    def simulate(sample, spike=None):
+    def simulate(sample, spike=None, depth=None):
+        depth = depth or a.depth
         r1p = os.path.join(fqdir, f"{sample}_R1.fastq.gz")
         r2p = os.path.join(fqdir, f"{sample}_R2.fastq.gz")
         spike = spike or {}
@@ -165,7 +166,7 @@ def main():
                     if s <= pos < e and pos < len(seq):
                         seq[pos] = alt
                 seq = "".join(seq)
-                step = max(1, READLEN // max(1, a.depth) * 2)
+                step = max(1, READLEN // max(1, depth) * 2)
                 for start in range(max(0, s - 50), min(len(seq), e + 50) - FRAG, step):
                     frag = seq[start:start + FRAG]
                     if len(frag) < FRAG:
@@ -186,16 +187,19 @@ def main():
     alt_base = {"A": "G", "G": "A", "C": "T", "T": "C", "N": "A"}[ref_base]
     spike = {truth_contig: [(spike_pos, alt_base)]}
 
-    samples = [("CTRL", spike), ("S1", spike), ("S2", {})]
+    # (sample, spike, depth) — LOWQC is deliberately under-covered to exercise the
+    # QC gate's quarantine + prove it is excluded from joint calling downstream.
+    samples = [("CTRL", spike, 30), ("S1", spike, 30), ("S2", {}, 30), ("LOWQC", {}, 2)]
     sheet = os.path.join(refdir, "..", "test_samplesheet.csv")
     sheet = os.path.normpath(sheet)
     with open(sheet, "w") as fh:
         fh.write("sample_id,fastq_1,fastq_2,sex,phenotype,covariate_age,batch\n")
         meta = {"CTRL": ("F", "control", "30", "b1"),
                 "S1":   ("M", "case", "45", "b1"),
-                "S2":   ("F", "control", "52", "b2")}
-        for sample, sp in samples:
-            r1, r2 = simulate(sample, sp)
+                "S2":   ("F", "control", "52", "b2"),
+                "LOWQC":("F", "control", "39", "b2")}
+        for sample, sp, dp in samples:
+            r1, r2 = simulate(sample, sp, dp)
             sx, ph, ag, bt = meta[sample]
             fh.write(f"{sample},{os.path.abspath(r1)},{os.path.abspath(r2)},{sx},{ph},{ag},{bt}\n")
 

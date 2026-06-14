@@ -15,6 +15,10 @@ include { FASTQC_RAW; FASTP; BWAMEM2_INDEX; BWAMEM2_ALIGN; MARKDUP; BQSR;
           SUMMARIZE_SAMPLE_QC; QC_GATE; PLOT_ALIGN_QC; PLOT_COVERAGE;
           PLOT_QC_GATE } from '../modules/stage1_5_align_qc.nf'
 
+include { HAPLOTYPECALLER; GENOMICSDB_IMPORT; GENOTYPE_GVCFS_DB; COMBINE_GENOTYPE;
+          HARD_FILTER; CALLSET_STATS; FILTER_SUMMARY; PLOT_CALLING_QC; PLOT_FILTER_QC;
+          DEEPVARIANT; GLNEXUS } from '../modules/stage6_7_calling.nf'
+
 workflow CALLFORGE {
     take:
     ch_reads        // tuple(sample_id, fastq_1, fastq_2)
@@ -84,10 +88,42 @@ workflow CALLFORGE {
         .join( ch_pass_ids.map { sid -> tuple(sid, true) } )
         .map { sid, bam, bai, ok -> tuple(sid, bam, bai) }
 
-    // ══════════════════════ PHASE 3+ EXTENSION POINT ═════════════════════════
-    // JOINT_CALL( ch_pass_bams, reference, target_bed ) -> FILTER -> CNV/STR/
-    // PARALOG -> ANNOTATE( DISCOVER_RESOURCES.out.manifest ) -> COHORT_QC ->
-    // GIAB -> BURDEN( VALIDATE_SAMPLESHEET.out.summary gates on phenotype ) -> REPORT.
+    // ── Stages 6-7 : SNV/indel joint calling -> hard-filter ──────────────────
+    // Only QC-PASS BAMs enter here; quarantined samples are excluded from the
+    // GenomicsDB / joint genotyping step (kept + reported by the gate).
+    def ch_joint
+    if (params.caller == 'deepvariant') {
+        DEEPVARIANT( ch_pass_bams, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai, ch_target_bed )
+        ch_dv = DEEPVARIANT.out.gvcf
+        GLNEXUS( ch_dv.map { s, g, t -> g }.collect(), ch_dv.map { s, g, t -> t }.collect(), ch_target_bed )
+        ch_joint = GLNEXUS.out.vcf
+    } else {
+        HAPLOTYPECALLER( ch_pass_bams, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai,
+                         PREPARE_REFERENCE.out.dict, ch_target_bed )
+        ch_g = HAPLOTYPECALLER.out.gvcf.map { s, g, t -> g }.collect()
+        ch_t = HAPLOTYPECALLER.out.gvcf.map { s, g, t -> t }.collect()
+        if (params.joint_method == 'combinegvcfs') {
+            COMBINE_GENOTYPE( ch_g, ch_t, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai,
+                              PREPARE_REFERENCE.out.dict, ch_target_bed )
+            ch_joint = COMBINE_GENOTYPE.out.vcf
+        } else {
+            GENOMICSDB_IMPORT( ch_g, ch_t, ch_target_bed )
+            GENOTYPE_GVCFS_DB( GENOMICSDB_IMPORT.out.gdb, PREPARE_REFERENCE.out.fasta,
+                               PREPARE_REFERENCE.out.fai, PREPARE_REFERENCE.out.dict, ch_target_bed )
+            ch_joint = GENOTYPE_GVCFS_DB.out.vcf
+        }
+    }
+
+    CALLSET_STATS( ch_joint )
+    HARD_FILTER( ch_joint, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai, PREPARE_REFERENCE.out.dict )
+    FILTER_SUMMARY( HARD_FILTER.out.vcf )
+    PLOT_CALLING_QC( CALLSET_STATS.out.json, FILTER_SUMMARY.out.qualdp )
+    PLOT_FILTER_QC( FILTER_SUMMARY.out.counts )
+
+    // ══════════════════════ PHASE 4+ EXTENSION POINT ═════════════════════════
+    // CNV (cnvkit/gatk_gcnv, callability from CF metadata) / STR (ExpansionHunter)
+    // / PARALOG flagging -> ANNOTATE( DISCOVER_RESOURCES.out.manifest ) -> COHORT_QC
+    // -> GIAB -> BURDEN( sheet_summary gates on phenotype ) -> REPORT.
 
     emit:
     fasta         = PREPARE_REFERENCE.out.fasta
@@ -100,4 +136,8 @@ workflow CALLFORGE {
     qc_scorecard  = QC_GATE.out.scorecard
     qc_summary    = QC_GATE.out.summary
     sheet_summary = VALIDATE_SAMPLESHEET.out.summary
+    joint_vcf     = ch_joint
+    filtered_vcf  = HARD_FILTER.out.vcf
+    calling_stats = CALLSET_STATS.out.json
+    filter_counts = FILTER_SUMMARY.out.counts
 }
