@@ -30,6 +30,8 @@ include { SOMALIER_EXTRACT; SOMALIER_RELATE; COHORT_QC; EXTRACT_CONTROL; GIAB_HA
 include { BURDEN_MATRIX; BURDEN_COLLAPSE; BURDEN_REGENIE; BURDEN_SKAT;
           PLOT_BURDEN } from '../modules/stage14_burden.nf'
 
+include { MULTIQC; DASHBOARD; PROVENANCE } from '../modules/stage15_report.nf'
+
 workflow CALLFORGE {
     take:
     ch_reads        // tuple(sample_id, fastq_1, fastq_2)
@@ -201,12 +203,14 @@ workflow CALLFORGE {
     }
 
     // ── Stage 14 : rare-variant burden / association (gated on phenotype) ──
+    def ch_bres = null
+    def ch_burden_meta = Channel.value(file("${projectDir}/assets/NO_CACHE"))
     if (params.run_burden) {
         def ch_cohortqc = params.somalier_sites ? COHORT_QC.out.json
                                                 : Channel.value(file("${projectDir}/assets/NO_CACHE"))
         BURDEN_MATRIX( ANNOTATE_DBS.out.vcf, INGEST_CAPTUREFORGE.out.tsv,
                        VALIDATE_SAMPLESHEET.out.csv, ch_cohortqc )
-        def ch_bres
+        ch_burden_meta = BURDEN_MATRIX.out.meta
         def ch_bsum
         if (params.burden_engine == 'collapse') {
             BURDEN_COLLAPSE( BURDEN_MATRIX.out.matrix, BURDEN_MATRIX.out.pheno )
@@ -223,8 +227,42 @@ workflow CALLFORGE {
         log.warn "run_burden=false: Stage 14 burden/association skipped."
     }
 
-    // ══════════════════════ PHASE 8 EXTENSION POINT ══════════════════════════
-    // REPORT: MultiQC + self-contained cohort QC dashboard + provenance.json.
+    // ── Stage 15 : reporting (MultiQC + self-contained cohort QC dashboard + provenance) ──
+    // Collect every captioned plot + key summary across stages (guarded for the
+    // conditional stages) into the dashboard; per-tool outputs into MultiQC.
+    def ch_png = PLOT_STAGE0.out.png.mix(
+        PLOT_ALIGN_QC.out.png, PLOT_COVERAGE.out.png, PLOT_QC_GATE.out.png,
+        PLOT_CALLING_QC.out.png, PLOT_FILTER_QC.out.png, PLOT_CNV.out.png,
+        PLOT_STR.out.png, PLOT_PARALOG.out.png, PLOT_ANNOTATION.out.png)
+    def ch_cap = PLOT_STAGE0.out.captions.mix(
+        PLOT_ALIGN_QC.out.captions, PLOT_COVERAGE.out.captions, PLOT_QC_GATE.out.captions,
+        PLOT_CALLING_QC.out.captions, PLOT_FILTER_QC.out.captions, PLOT_CNV.out.captions,
+        PLOT_STR.out.captions, PLOT_PARALOG.out.captions, PLOT_ANNOTATION.out.captions)
+    def ch_sum = DISCOVER_RESOURCES.out.manifest.mix(
+        QC_GATE.out.scorecard, VERIFY_ANNOTATION.out.landing, CNV_ANNOTATE.out.summary,
+        STR_SUMMARIZE.out.summary, PARALOG_FLAG.out.summary)
+    if (params.somalier_sites) {
+        ch_png = ch_png.mix(COHORT_QC.out.png); ch_cap = ch_cap.mix(COHORT_QC.out.captions)
+        ch_sum = ch_sum.mix(COHORT_QC.out.json)
+    }
+    if (params.giab_control_id && params.giab_truth_vcf && params.giab_truth_bed) {
+        ch_png = ch_png.mix(PLOT_GIAB.out.png); ch_cap = ch_cap.mix(PLOT_GIAB.out.captions)
+        ch_sum = ch_sum.mix(PLOT_GIAB.out.metrics)
+    }
+    if (params.run_burden && ch_bres) {
+        ch_png = ch_png.mix(PLOT_BURDEN.out.png); ch_cap = ch_cap.mix(PLOT_BURDEN.out.captions)
+        ch_sum = ch_sum.mix(ch_bres)
+    }
+    DASHBOARD( ch_png.collect(), ch_cap.collect(), ch_sum.collect() )
+
+    def ch_mqc = FASTQC_RAW.out.zip.mix(
+        FASTP.out.json, MARKDUP.out.metrics.map { it[1] }, HSMETRICS.out.metrics.map { it[1] },
+        SAMTOOLS_STATS.out.stats.map { it[1] }, MOSDEPTH.out.summary.map { it[1] },
+        CALLSET_STATS.out.stats)
+    MULTIQC( ch_mqc.collect() )
+
+    PROVENANCE( DISCOVER_RESOURCES.out.manifest, VALIDATE_SAMPLESHEET.out.summary,
+                QC_GATE.out.summary, QC_GATE.out.quarantine, ch_burden_meta )
 
     emit:
     fasta         = PREPARE_REFERENCE.out.fasta
@@ -249,4 +287,7 @@ workflow CALLFORGE {
     annotated_vcf   = ANNOTATE_DBS.out.vcf
     variants_tsv    = FLATTEN_TSV.out.tsv
     annotation_landing = VERIFY_ANNOTATION.out.landing
+    dashboard       = DASHBOARD.out.html
+    multiqc         = MULTIQC.out.report
+    provenance      = PROVENANCE.out.json
 }

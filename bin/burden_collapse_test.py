@@ -64,7 +64,7 @@ def main():
             n_carr = a_ + c_
             if n_carr > 0:
                 chi2s.append(chi2)
-            results.append({"unit": unit, "kind": unit.split(":")[0],
+            results.append({"unit": unit, "kind": unit.split(":")[0], "engine": "collapse_chi2",
                             "n_carriers": n_carr, "case_carriers": a_, "control_carriers": c_,
                             "chi2": round(chi2, 4),
                             "p": ("NA" if n_carr == 0 else round(p, 6))})
@@ -74,7 +74,9 @@ def main():
 
     results.sort(key=lambda r: (r["p"] == "NA", r["p"] if r["p"] != "NA" else 1))
     with open(os.path.join(a.outdir, "burden_results.tsv"), "w") as fh:
-        cols = ["unit", "kind", "n_carriers", "case_carriers", "control_carriers", "chi2", "p"]
+        # 'engine' column so a result is never mistaken for a regenie association
+        # when the file is read without the dashboard.
+        cols = ["unit", "kind", "engine", "n_carriers", "case_carriers", "control_carriers", "chi2", "p"]
         fh.write("\t".join(cols) + "\n")
         for r in results:
             fh.write("\t".join(str(r[c]) for c in cols) + "\n")

@@ -186,7 +186,7 @@ def main():
     else:
         ax.text(0.5, 0.5, "no somalier sex calls", ha="center", va="center", transform=ax.transAxes); ax.set_xticks([])
     ax.set_title("Sex: declared vs somalier-inferred"); ax.tick_params(axis="x", rotation=45)
-    save(fig, a.outdir, "sex_check",
+    save(fig, a.outdir, "cohort_sex_check",
          "Declared vs somalier-inferred sex per sample (somalier infers from X/Y signal incl. "
          "off-target reads — the backstop for an autosomal panel with no X/Y targets).")
 
