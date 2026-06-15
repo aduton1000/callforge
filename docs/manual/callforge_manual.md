@@ -190,6 +190,58 @@ shared Nextflow, source the shared conda, set `APPTAINER_BINDPATH`); see
 builds once cluster-wide; `--slurm_partition` / `--slurm_account` / `--scratch_dir` are
 overridable. Heavy steps (`index`, `align`, `large` labels) get bigger slots.
 
+## 4.3 The `callforge` command (unified CLI)
+
+CallForge ships a small console command, **`callforge`**, that is a friendly front door to
+the existing entry points. Install it from the repo with an editable pip install (it is
+stdlib-only — no heavy dependencies):
+
+```bash
+cd /path/to/callforge
+pip install -e .
+# registers `callforge` on PATH (in the active environment's bin/)
+callforge --help        # list subcommands
+callforge --version     # 0.1.0
+```
+
+Subcommands:
+
+- `callforge run …` — run the full pipeline (thin wrapper over `nextflow run`; §8.0).
+- `callforge samplesheet …` — scaffold/assemble a sample sheet (§5.1).
+- `callforge resources …` — resource discovery / genomic-scope checks (`discover_resources.py`).
+
+The CLI is **purely additive**: the raw forms keep working unchanged
+(`python3 bin/init_sample_sheet.py …`, `nextflow run main.nf …`). On the cluster, the
+shared conda env under `/hpc/opt/conda/envs/` plus the Lmod module/wrapper (§4.2) put
+`callforge` on `PATH` cluster-wide, so users run `callforge run …` without a manual install.
+
+> Stage-level subcommands (e.g. `callforge cnv`, `callforge anno`) are a planned
+> enhancement — they would map to Nextflow `-entry <subworkflow>` to run/resume a single
+> stage. They are **not** built yet.
+
+## 4.4 How CallForge uses conda environments
+
+CallForge deliberately uses **several small, isolated per-stage conda environments** rather
+than one big environment:
+
+- `callforge` (core: alignment/QC/calling/filter), `callforge-cnv`, `callforge-str`,
+  `callforge-annotate` (VEP/vcfanno), `callforge-cohortqc`, `callforge-burden`,
+  `callforge-happy`, `callforge-deepvariant` — one per `env/*.yml`.
+
+Different stages need **conflicting toolchains** (CNV vs STR vs VEP/Perl vs GATK/Java), and
+isolating them avoids dependency clashes — co-installing the CNV and STR tools into one
+shared environment corrupted it during development. This is the same pattern nf-core uses.
+
+- **You never activate these by hand.** With `-profile conda` (or `,apptainer`), **Nextflow
+  activates the correct environment/container for each process automatically**; you run one
+  command (`callforge run …`).
+- **Runtime vs dev-only.** The envs above are the *runtime contract* — they are declared by
+  the pipeline stages and ship with it. A couple of environments are **dev-only byproducts**
+  and are **not** part of that contract: the graphviz env used only to render this manual's
+  DAG, and Nextflow's own runtime env.
+- The unified `callforge` CLI is just a friendly front door — these isolated per-stage envs
+  continue to work underneath it, invisibly.
+
 # 5. Inputs
 
 ## 5.1 Sample sheet (CSV) — `--input`
@@ -225,17 +277,19 @@ The **phenotype is irreducibly yours**: CallForge never invents, guesses, or def
 The helper below only *pairs FASTQs* and *joins metadata you supply*; anything it cannot
 resolve it **reports** rather than fills.
 
-**Three ways to build one.**
+**Three ways to build one.** The commands below use the unified CLI
+(`callforge samplesheet …`); the raw form `python3 bin/init_sample_sheet.py …` works
+identically.
 
 *1 — Hand-author the CSV.* Write the schema above directly (absolute FASTQ paths). Fine
 for a handful of samples.
 
-*2 — Scaffold from a FASTQ directory* (`init_sample_sheet.py`, Mode A). Pairs R1/R2 by the
-usual Illumina conventions and infers `sample_id` from the filename, leaving the metadata
-columns blank for you to complete:
+*2 — Scaffold from a FASTQ directory* (Mode A). Pairs R1/R2 by the usual Illumina
+conventions and infers `sample_id` from the filename, leaving the metadata columns blank
+for you to complete:
 
 ```bash
-python3 bin/init_sample_sheet.py \
+callforge samplesheet \
     --fastq-dir /data/fq \
     --out sample_sheet.csv
 # then open sample_sheet.csv and fill sex / phenotype / covariate_* / batch
@@ -245,7 +299,7 @@ python3 bin/init_sample_sheet.py \
 step. Provide a clinical CSV keyed on `sample_id` (override with `--metadata-id-col`):
 
 ```bash
-python3 bin/init_sample_sheet.py \
+callforge samplesheet \
     --fastq-dir /data/fq \
     --metadata clinical.csv \
     --metadata-id-col sample_id \
@@ -253,20 +307,12 @@ python3 bin/init_sample_sheet.py \
     --out sample_sheet.csv
 ```
 
-where `clinical.csv` is your own study table, e.g.:
-
-```text
-sample_id,sex,phenotype,covariate_age,batch
-S001,F,case,41,b1
-S002,M,control,55,b1
-```
-
 *Mode C — map your core's manifest.* If the core already gave you a
 `sample_id,fastq_1,fastq_2` export (a LIMS manifest), join metadata straight onto it
 without re-scanning a directory:
 
 ```bash
-python3 bin/init_sample_sheet.py \
+callforge samplesheet \
     --fastq-csv lims_manifest.csv \
     --metadata clinical.csv \
     --out sample_sheet.csv
@@ -276,6 +322,61 @@ Useful flags: `--recursive` (walk sub-directories), `--r1-pattern`/`--r2-pattern
 read markers), `--id-regex` (custom `sample_id` extraction), `--strip-suffixes` /
 `--lowercase-ids` (reconcile minor ID naming differences), and `--overwrite`. The helper
 **only reads** the FASTQ/metadata files — it never moves or modifies them.
+
+**Worked examples (input → produced sheet → checks).** A FASTQ directory with four pairs
+(`CTRL`, `LOWQC`, `S1`, `S2`) is the input for Modes A and B below.
+
+*Mode A* — only the sequencing columns are filled; `sex, phenotype, batch` are present but
+**blank** for you to complete (add `covariate_*` columns by hand or via a Mode-B join):
+
+```text
+sample_id,fastq_1,fastq_2,sex,phenotype,batch
+CTRL,/data/fq/CTRL_R1.fastq.gz,/data/fq/CTRL_R2.fastq.gz,,,
+LOWQC,/data/fq/LOWQC_R1.fastq.gz,/data/fq/LOWQC_R2.fastq.gz,,,
+S1,/data/fq/S1_R1.fastq.gz,/data/fq/S1_R2.fastq.gz,,,
+S2,/data/fq/S2_R1.fastq.gz,/data/fq/S2_R2.fastq.gz,,,
+```
+
+*Mode B* — given this clinical CSV (note: no `LOWQC` row, and a stray `S07`):
+
+```text
+sample_id,sex,phenotype,covariate_age,batch
+CTRL,F,control,30,b1
+S1,M,case,45,b1
+S2,F,control,52,b2
+S07,F,case,41,b2
+```
+
+the produced sheet joins the metadata in (the `covariate_age` column is carried through);
+`LOWQC` stays blank because it had no clinical row:
+
+```text
+sample_id,fastq_1,fastq_2,sex,phenotype,batch,covariate_age
+CTRL,/data/fq/CTRL_R1.fastq.gz,/data/fq/CTRL_R2.fastq.gz,F,control,b1,30
+LOWQC,/data/fq/LOWQC_R1.fastq.gz,/data/fq/LOWQC_R2.fastq.gz,,,,
+S1,/data/fq/S1_R1.fastq.gz,/data/fq/S1_R2.fastq.gz,M,case,b1,45
+S2,/data/fq/S2_R1.fastq.gz,/data/fq/S2_R2.fastq.gz,F,control,b2,52
+```
+
+*Mode C* — given a LIMS manifest (`lims_manifest.csv`):
+
+```text
+sample_id,fastq_1,fastq_2
+S1,/data/fq/S1_R1.fastq.gz,/data/fq/S1_R2.fastq.gz
+S2,/data/fq/S2_R1.fastq.gz,/data/fq/S2_R2.fastq.gz
+```
+
+and a clinical CSV whose `S02` is a typo for `S2`, the join produces:
+
+```text
+sample_id,fastq_1,fastq_2,sex,phenotype,batch
+S1,/data/fq/S1_R1.fastq.gz,/data/fq/S1_R2.fastq.gz,M,case,
+S2,/data/fq/S2_R1.fastq.gz,/data/fq/S2_R2.fastq.gz,,,
+```
+
+— `S2` is left blank and the report flags `S02` as metadata-without-sequence with the
+near-miss hint `[closest FASTQ id: S2]` (re-run with `--strip-suffixes`/`--lowercase-ids`,
+or fix the typo, to make it join).
 
 **The reconciliation report.** Alongside the CSV the helper writes
 `<out>_report.txt` and prints it. It explicitly lists every join discrepancy so a broken
@@ -470,11 +571,64 @@ All multi-flag commands use backslash continuation (one flag per line). On a loc
 use `,conda` (and `,docker` for the VEP/hap.py containers); on the cluster use
 `,apptainer`.
 
+## 8.0 How to invoke CallForge (command hierarchy)
+
+There are three equivalent ways to launch CallForge — all run the *same* pipeline. Lead
+with the named command; drop to the raw forms only when you have not installed the CLI.
+
+**Tier 1 — the named command (recommended, after `pip install -e .`).** `callforge run`
+is a thin wrapper over `nextflow run`; every flag after it is passed straight to Nextflow.
+
+```bash
+# runs the full CallForge pipeline (FASTQ -> annotated joint callset -> burden)
+callforge run \
+    -profile mac_local,conda \
+    -params-file params.full.yaml
+```
+
+```bash
+# the same on an HPC cluster (SLURM + Apptainer)
+callforge run \
+    -profile hpc_slurm,apptainer \
+    -params-file params.full.yaml
+```
+
+**Tier 2 — from GitHub without cloning** (Nextflow pulls the repo for you):
+
+```bash
+# runs CallForge straight from GitHub; version-pin with -r <tag/branch>
+nextflow run aduton1000/callforge -r v0.1.0 \
+    -profile hpc_slurm,apptainer \
+    -params-file params.full.yaml
+```
+
+The GitHub account is **aduton1000**. The repo is **currently private**, so this form
+works only for users with repo access until it is made public; always pin a version with
+`-r <tag/branch>` for reproducibility.
+
+**Tier 3 — from a cloned repo (developers):**
+
+```bash
+# runs CallForge from inside the clone
+nextflow run main.nf \
+    -profile mac_local,conda \
+    -params-file params.full.yaml
+```
+
+`main.nf` **is** CallForge's entry script — it imports the subworkflows and wires the DAG,
+so `nextflow run main.nf` runs the whole pipeline, but only from inside the repo directory.
+`callforge run` (Tier 1) simply locates this `main.nf` for you and runs it from anywhere.
+
+In every tier, `params.full.yaml` supplies the **reference** (`genome_fasta`), the
+**target BED + CaptureForge handoff** (`target_bed` / `captureforge_dir`), the
+**annotation resources** (resource directories), and the **sample sheet** (`input`).
+
 ## 8.1 Quickstart (test profile)
 
 ```bash
+# build a tiny fixture, then run all 16 stages of CallForge in minutes
 bash test/make_test_data.sh
-nextflow run main.nf -profile test,docker
+callforge run -profile test,docker          # or: nextflow run main.nf -profile test,docker
 ```
 
 This builds a tiny self-contained fixture (mini-genome + synthetic reads) and runs all 16
@@ -488,13 +642,13 @@ stages in minutes. Use it to confirm your install.
 # 2. confirm resources discover + pass the scope gate; fetch genome-wide
 #    gnomAD/ClinVar if missing (§6.4); supply a genome-wide dbSNP
 
-# 3. run (authoring machine)
-nextflow run main.nf \
+# 3. run CallForge (authoring machine); raw form: nextflow run main.nf …
+callforge run \
   -profile mac_local,conda \
   -params-file params.full.yaml
 
 # 3'. or the cluster
-nextflow run main.nf \
+callforge run \
   -profile hpc_slurm,apptainer \
   -params-file params.full.yaml
 ```

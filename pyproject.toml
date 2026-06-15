@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "callforge"
+version = "0.1.0"
+description = "CallForge — unified CLI front door for the targeted-capture germline analysis pipeline (FASTQ -> annotated joint callset -> burden)."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Bright Adu" }]
+keywords = ["genomics", "germline", "targeted-capture", "nextflow", "burden"]
+
+# The CLI is stdlib-only (argparse). It is a thin front door; the pipeline's real
+# runtime dependencies live in the per-stage conda envs (env/*.yml) / containers,
+# which Nextflow activates automatically. No heavy Python deps belong here.
+dependencies = []
+
+[project.scripts]
+# registers the `callforge` command on PATH after `pip install -e .`
+callforge = "callforge_cli.cli:main"
+
+[tool.setuptools]
+packages = ["callforge_cli"]

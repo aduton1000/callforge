@@ -145,8 +145,9 @@ def norm_key(s, strip_suffixes, lowercase):
 
 
 # ---------------------------------------------------------------------- main
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(
+        prog="callforge samplesheet",
         description="Scaffold/assemble a CallForge sample sheet (pairs FASTQs, joins "
                     "user metadata; never invents phenotype).")
     src = ap.add_argument_group("inputs (choose a mode)")
@@ -169,7 +170,7 @@ def main():
     ap.add_argument("--out", default="sample_sheet.csv")
     ap.add_argument("--report", default="", help="report path (default: <out>_report.txt)")
     ap.add_argument("--overwrite", action="store_true")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     if not a.fastq_dir and not a.fastq_csv:
         die("need --fastq-dir (mode A/B) or --fastq-csv (mode C)")
