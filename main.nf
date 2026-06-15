@@ -8,6 +8,10 @@ nextflow.enable.dsl = 2
 
 include { CALLFORGE } from './subworkflows/callforge.nf'
 
+// Stage-subcommand entry workflows (run ONE stage standalone via `-entry <stage>` /
+// `callforge <stage>`). They reuse the same stage modules as the full pipeline.
+include { ANNO; BURDEN } from './subworkflows/entries.nf'
+
 def helpMessage() {
     log.info """
     ╔══════════════════════════════════════════════════════════════════════╗
@@ -39,6 +43,19 @@ def resolveCF(explicit, candidates, placeholder) {
 
 workflow {
     if (params.help) { helpMessage(); return }
+
+    // ── Stage subcommands ────────────────────────────────────────────────────
+    // `nextflow run main.nf --stage <name> --<inputs…>` runs ONE stage standalone on
+    // user-supplied inputs, reusing the SAME modules as the pipeline. Exposed as
+    // `callforge <stage>` by the CLI. (Param dispatch — portable across Nextflow
+    // versions; the strict parser disallows `-entry` for named workflows.)
+    if (params.stage) {
+        if      (params.stage == 'anno')   { ANNO()   }
+        else if (params.stage == 'burden') { BURDEN() }
+        else { exit 1, "ERROR: unknown stage '${params.stage}'. Available: anno, burden" }
+        return
+    }
+
     if (!params.input)        { exit 1, "ERROR: --input sample sheet is required" }
     if (!params.genome_fasta) { exit 1, "ERROR: --genome_fasta (no-alt primary assembly) is required" }
     if (!params.target_bed)   { exit 1, "ERROR: --target_bed (final_covered_targets.bed) is required" }
