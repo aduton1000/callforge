@@ -745,6 +745,110 @@ nextflow run main.nf -profile mac_local,conda -params-file params.full.yaml \
 hap.py scores precision/recall/F1 **restricted to the panel BED** (on-target only), so
 off-target truth cannot distort the panel's measured sensitivity.
 
+## 8.10 Stage subcommands (run one stage standalone)
+
+Sometimes you only want to re-run **one** stage on its own inputs — re-annotate after an
+annotation-database update, re-run burden with new thresholds, re-call CNV — without
+repeating the whole pipeline. Each analytical stage is exposed as `callforge <stage>`,
+which runs `nextflow run main.nf --stage <stage> …` (a `--stage` param, not `-entry`:
+portable across Nextflow versions). **Every stage subcommand invokes the exact same module
+the full pipeline uses** — standalone and in-pipeline execution are the same code path, so
+results never depend on how the stage was launched.
+
+Three things hold for every stage subcommand:
+
+- **Non-destructive by default.** Output goes to a fresh `results/standalone/<stage>_<timestamp>/`
+  so a re-run never overwrites the pipeline's `results/stageXX_*`. Override with `--outdir <dir>`,
+  or opt into updating `results/` in place with `--in-place`.
+- **Each stage emits its own report + provenance** in its stage dir: `<stage>_report.md`
+  (key metrics + that stage's QC plots with captions) and `<stage>_provenance.json`
+  (inputs + checksums, parameters, tool versions, git commit).
+- **Inputs are validated fail-loud** before the stage runs (index/contig agreement, the
+  reference invariant and DB scope gate where relevant, phenotype for burden), exiting
+  non-zero on a mismatch.
+
+`callforge <stage> --help` prints that stage's required + optional input files.
+
+Key-output filenames below are relative to the stage's own output directory
+(`stageXX_…/`), e.g. `align` writes `stage4_postalign/`, `anno` writes
+`stage11_annotation/`. Each stage also writes `<stage>_report.md` + `_provenance.json`.
+
+| `callforge` | Required input files | Key output(s) | QC plots |
+|:------|:-----------|:------------------|:--------------|
+| `align` *(per-sample)* | `--input` or `--fastq_1/2`; `--genome_fasta`; `--target_bed` | `<sample>.analysis.bam` | mapping rate, insert size, dup rate |
+| `coverage` *(per-sample → gate)* | `--input_bams`; `--genome_fasta`; `--target_bed` | `qc_scorecard.tsv`, `qc_pass.txt`, `qc_quarantine.txt` | on-target enrichment, coverage uniformity, per-gene depth, coverage cumulative, QC scorecard |
+| `call` *(joint)* | `--input_bams` (QC-pass); `--genome_fasta`; `--target_bed` | `joint.filtered.vcf.gz` | variants per sample, Ti/Tv, het:hom, QUAL/DP, filter counts |
+| `cnv` *(per-sample)* | `--input_bams`; `--genome_fasta`; `--target_bed` | `cnv_calls.tsv` (callability-labelled) | copy ratio, calls per sample, callability |
+| `str` *(per-sample)* | `--input_bams`; `--genome_fasta`; `--target_bed` | `str_calls.tsv` | allele sizes, call rate, read support |
+| `paralog` *(joint VCF)* | `--input_vcf`; `--target_bed` | `paralog.annotated.vcf.gz` (`PARALOG_GENE`/`CONF`) | paralog confidence |
+| `anno` *(VCF)* | `--input_vcf`; `--genome_fasta`; `--target_bed` | `annotated.vcf.gz`, `variants.flat.tsv` | annotation landing, consequence dist., novel vs known, gnomAD-AFR AF, PhyloP |
+| `cohortqc` *(cohort)* | `--input_bams`; `--input_vcf`; `--genome_fasta`; `--somalier_sites`; `--input` | `cohort_qc.json` | relatedness heatmap, ancestry PCA, sex check, missingness |
+| `giab` *(control)* | `--input_vcf`; `--giab_control_id`; `--giab_truth_vcf`/`_bed`; `--target_bed`; `--genome_fasta` | `happy.summary.csv`, `happy.runinfo.json` | precision/recall, F1 |
+| `burden` *(cohort)* | `--input_vcf`; `--input` (phenotype); `--target_bed` | `burden_results.tsv` | Q–Q, Manhattan |
+
+Notable **optional** inputs: `align` `--known_sites`; `call` `--caller deepvariant` /
+`--joint_method`; `cnv` `--cnv_method`/`--cnv_segment_method` (a different CNV *caller*,
+`gatk_gcnv`, is documented but not yet wired — same as the pipeline); `str` `--str_catalog`;
+`anno` `--vcfanno_toml`/`--species`; `burden` `--burden_engine`/`--burden_af_max`/`--burden_csq`
+and `--cohort_qc_json` (ancestry PCs from a prior `cohortqc` run). The CaptureForge
+metadata (callability, STR catalog, paralog regions, burden groups) is rebuilt from
+`--target_bed` + `--cf_metrics_json`/`--captureforge_dir` exactly as in-pipeline, so those
+labels appear on standalone outputs too. `paralog` uses the VCF's own `MQ` (it does **not**
+take BAMs); `cohortqc` needs **both** BAMs (somalier/sex) and the joint VCF (missingness/PCA).
+
+### Worked examples
+
+**1 — Re-annotate after an annotation-database update** (e.g. a new ClinVar release). Point
+discovery at the updated database directory and re-run only Stage 11 on the existing
+paralog-flagged callset:
+
+```bash
+callforge anno \
+    --input_vcf results/stage10_paralog/paralog.annotated.vcf.gz \
+    --genome_fasta /refs/GRCh38_noalt.fa \
+    --target_bed /captureforge/final_covered_targets.bed \
+    --resource_dirs /refs/annotation_db_2025_06 \
+    -profile mac_local,conda
+# -> results/standalone/anno_<timestamp>/stage11_annotation/annotated.vcf.gz
+#    + variants.flat.tsv, anno_report.md, anno_provenance.json
+```
+
+**2 — Re-run burden with a new AF cutoff, consequence set, and engine.** Reuse the annotated
+callset; change only the thresholds/engine. Optionally reuse ancestry PCs from a prior
+`cohortqc` run:
+
+```bash
+callforge burden \
+    --input_vcf results/stage11_annotation/annotated.vcf.gz \
+    --input sample_sheet.csv \
+    --target_bed /captureforge/final_covered_targets.bed \
+    --burden_af_max 0.005 \
+    --burden_csq 'frameshift_variant,stop_gained,splice_acceptor_variant,splice_donor_variant' \
+    --burden_engine regenie \
+    --cohort_qc_json results/stage12_cohortqc/cohort_qc.json \
+    -profile mac_local,conda
+# -> results/standalone/burden_<timestamp>/stage14_burden/burden_results.tsv
+#    (engine column stamps the method) + burden_report.md, burden_provenance.json
+```
+
+**3 — Re-call CNV with different segmentation.** Re-run Stage 8 on the same BAMs with a
+different CNVkit method/segmenter (the calls stay CaptureForge-callability-labelled):
+
+```bash
+callforge cnv \
+    --input_bams 'results/standalone/align_*/stage4_postalign/*.analysis.bam' \
+    --genome_fasta /refs/GRCh38_noalt.fa \
+    --target_bed /captureforge/final_covered_targets.bed \
+    --cf_metrics_json /captureforge/results/full_run/stage9_qc/metrics.json \
+    --cnv_method hybrid --cnv_segment_method cbs \
+    -profile mac_local,conda
+# -> results/standalone/cnv_<timestamp>/stage8_cnv/cnv_calls.tsv
+#    (each call labelled callable | breakpoint_blind_low_confidence) + cnv_report.md
+```
+
+(The alternative SNV caller is available the same way: `callforge call --caller deepvariant …`
+runs DeepVariant + GLnexus instead of GATK; see §8.8.)
+
 # 9. Quality control
 
 CallForge's QC philosophy: **a plot at every applicable stage** (each with a one-line

@@ -28,36 +28,36 @@ digraph CallForge {
     S2 [label="Stage 2 — Trimming\nfastp (DBS-appropriate)", fillcolor="#fef7e0", color="#f9ab00"];
 
     // alignment
-    S3 [label="Stage 3 — Alignment\nbwa-mem2 → samtools sort", fillcolor="#e6f4ea", color="#34a853"];
+    S3 [label="Stage 3 — Alignment\nbwa-mem2 → samtools sort\n[callforge align]", fillcolor="#e6f4ea", color="#34a853"];
 
     // post-alignment
     S4 [label="Stage 4 — Post-alignment\nPicard MarkDuplicates · GATK BQSR (graceful)\nPicard CollectHsMetrics · mosdepth per-gene depth", fillcolor="#d7f0e3", color="#137333"];
 
     // QC gate
-    S5 [label="Stage 5 — Per-sample QC gate / quarantine\nqc_gate.py (depth · dup · on-target · contamination · sex)\nFLAG & QUARANTINE — never silently drop", fillcolor="#fce8e6", color="#ea4335"];
+    S5 [label="Stage 5 — Per-sample QC gate / quarantine\nqc_gate.py (depth · dup · on-target · contamination · sex)\nFLAG & QUARANTINE — never silently drop\n[callforge coverage]", fillcolor="#fce8e6", color="#ea4335"];
 
     // calling + filter (+ alt engine)
-    S6 [label="Stage 6 — SNV/indel joint calling\nGATK HaplotypeCaller(GVCF) →\nGenomicsDBImport/CombineGVCFs → GenotypeGVCFs", fillcolor="#ede7f6", color="#673ab7"];
+    S6 [label="Stage 6 — SNV/indel joint calling\nGATK HaplotypeCaller(GVCF) →\nGenomicsDBImport/CombineGVCFs → GenotypeGVCFs\n[callforge call → joint hard-filtered VCF]", fillcolor="#ede7f6", color="#673ab7"];
     S6alt [label="ALT engine (--caller deepvariant)\nDeepVariant → GLnexus", fillcolor="#ede7f6", color="#673ab7", style="rounded,filled,dashed"];
     S7 [label="Stage 7 — Hard-filtering\nGATK VariantFiltration (SNP/indel) → MergeVcfs", fillcolor="#ede7f6", color="#673ab7"];
 
     // CNV / STR / paralog
-    S8 [label="Stage 8 — CNV\nCNVkit (PoN from QC-pass samples)\nlabelled by CaptureForge callability", fillcolor="#e0f7fa", color="#00acc1"];
+    S8 [label="Stage 8 — CNV\nCNVkit (PoN from QC-pass samples)\nlabelled by CaptureForge callability\n[callforge cnv]", fillcolor="#e0f7fa", color="#00acc1"];
     S8alt [label="ALT (--cnv_caller gatk_gcnv)\nGATK gCNV", fillcolor="#e0f7fa", color="#00acc1", style="rounded,filled,dashed"];
-    S9 [label="Stage 9 — STR genotyping\nExpansionHunter (panel catalog)", fillcolor="#e0f7fa", color="#00acc1"];
-    S10 [label="Stage 10 — Paralog-aware flagging\nparalog_flag.py → INFO/PARALOG_GENE,PARALOG_CONF", fillcolor="#e0f7fa", color="#00acc1"];
+    S9 [label="Stage 9 — STR genotyping\nExpansionHunter (panel catalog)\n[callforge str]", fillcolor="#e0f7fa", color="#00acc1"];
+    S10 [label="Stage 10 — Paralog-aware flagging\nparalog_flag.py → INFO/PARALOG_GENE,PARALOG_CONF\n[callforge paralog]", fillcolor="#e0f7fa", color="#00acc1"];
 
     // annotation
-    S11 [label="Stage 11 — Annotation\nVEP (consequence/SIFT/PolyPhen) +\nvcfanno (gnomAD-AFR/ClinVar/dbSNP) + PhyloP\nchr-reconciled · landing-verified", fillcolor="#fff3e0", color="#fb8c00"];
+    S11 [label="Stage 11 — Annotation\nVEP (consequence/SIFT/PolyPhen) +\nvcfanno (gnomAD-AFR/ClinVar/dbSNP) + PhyloP\nchr-reconciled · landing-verified\n[callforge anno]", fillcolor="#fff3e0", color="#fb8c00"];
 
     // cohort QC
-    S12 [label="Stage 12 — Cohort QC\nsomalier relatedness/sex + ancestry PCA + missingness", fillcolor="#f3e5f5", color="#8e24aa"];
+    S12 [label="Stage 12 — Cohort QC\nsomalier relatedness/sex + ancestry PCA + missingness\n[callforge cohortqc]", fillcolor="#f3e5f5", color="#8e24aa"];
 
     // GIAB
-    S13 [label="Stage 13 — GIAB validation\nhap.py (precision/recall/F1)\nrestricted to panel BED (on-target)", fillcolor="#e8eaf6", color="#3949ab"];
+    S13 [label="Stage 13 — GIAB validation\nhap.py (precision/recall/F1)\nrestricted to panel BED (on-target)\n[callforge giab]", fillcolor="#e8eaf6", color="#3949ab"];
 
     // burden (+ engine options)
-    S14 [label="Stage 14 — Rare-variant burden\nrare+functional → collapse by gene & gene-set\n(covariates + ancestry-PC gate)", fillcolor="#fbe9e7", color="#d84315"];
+    S14 [label="Stage 14 — Rare-variant burden\nrare+functional → collapse by gene & gene-set\n(covariates + ancestry-PC gate)\n[callforge burden]", fillcolor="#fbe9e7", color="#d84315"];
     S14e [label="engine: collapse (chi²) |\nregenie (Firth) | SKAT-O / STAAR", fillcolor="#fbe9e7", color="#d84315", style="rounded,filled,dashed"];
 
     // reporting
@@ -107,6 +107,7 @@ digraph CallForge {
         L10 [label="Burden / association", fillcolor="#fbe9e7", color="#d84315"];
         L11 [label="Reporting", fillcolor="#eceff1", color="#546e7a"];
         L12 [label="External input (dashed = drives/labels)", fillcolor="#fffde7", color="#f9a825", shape=cylinder];
-        L0->L1->L2->L3->L4->L5->L6->L7->L8->L9->L10->L11->L12 [style=invis];
+        Lsub [label="[callforge <stage>] = runnable standalone\n(callforge run = full pipeline)", fillcolor="#ffffff", color="#546e7a"];
+        L0->L1->L2->L3->L4->L5->L6->L7->L8->L9->L10->L11->L12->Lsub [style=invis];
     }
 }
