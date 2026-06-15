@@ -103,7 +103,7 @@ process EXPANSIONHUNTER {
     script:
     """
     ExpansionHunter --reads ${bam} --reference ${fasta} \\
-        --variant-catalog ${catalog} --output-prefix ${sample_id}
+        --variant-catalog ${catalog} --output-prefix ${sample_id} --threads ${task.cpus}
     """
 }
 

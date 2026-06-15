@@ -25,7 +25,7 @@ process VEP {
         "--gtf ${aux}" :
         "--offline --cache --dir_cache ${aux} --species ${params.species} --assembly ${params.genome_build} --sift b --polyphen b --mane --hgvs"
     """
-    vep ${common} ${modeargs} -i ${vcf} -o vep.vcf.gz --compress_output bgzip
+    vep ${common} ${modeargs} --fork ${task.cpus} -i ${vcf} -o vep.vcf.gz --compress_output bgzip
     tabix -p vcf vep.vcf.gz
     """
 }
