@@ -186,8 +186,25 @@ def cmd_stage(stage, rest):
     ap = argparse.ArgumentParser(prog=f"callforge {stage}", allow_abbrev=False, add_help=False)
     ap.add_argument("--pipeline", metavar="PATH|owner/repo")
     ap.add_argument("--print-cmd", action="store_true")
+    ap.add_argument("--in-place", action="store_true",
+                    help="update the pipeline's results/ in place (default: a fresh "
+                         "results/standalone/<stage>_<timestamp>/ — non-destructive)")
     known, passthrough = ap.parse_known_args(rest)
-    return _launch_nextflow(known.pipeline, ["--stage", stage], passthrough, known.print_cmd)
+
+    # Non-destructive by default: send outputs to a fresh standalone dir unless the user
+    # picked an --outdir or opted into --in-place. (The re-annotate / re-burden use cases
+    # are comparisons — never clobber the baseline results/.)
+    prefix = ["--stage", stage]
+    if known.in_place:
+        prefix += ["--in_place", "true"]
+    elif "--outdir" not in passthrough:
+        import datetime
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        outdir = os.path.join("results", "standalone", f"{stage}_{ts}")
+        prefix += ["--outdir", outdir]
+        sys.stderr.write(f"[callforge] standalone outputs -> {outdir} "
+                         f"(use --outdir <dir> to change, or --in-place to update results/)\n")
+    return _launch_nextflow(known.pipeline, prefix, passthrough, known.print_cmd)
 
 
 # ----------------------------------------------------------------- dispatch
