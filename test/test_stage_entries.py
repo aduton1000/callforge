@@ -120,6 +120,53 @@ class ReportAndProvenance(unittest.TestCase):
             self.assertEqual(len(prov["inputs"]["vcf"]["sha256"]), 64)
 
 
+# ─────────── layer 1: CaptureForge-label propagation on STANDALONE outputs ───────────
+class LabelPropagation(unittest.TestCase):
+    """The label-applying module commands, run exactly as the standalone cnv/str entries
+    invoke them, on synthesized CaptureForge metadata — proving the labels survive when a
+    stage is run alone (not just in-pipeline)."""
+
+    def _meta_and_bed(self, d):
+        meta = os.path.join(d, "gene_metadata.tsv")
+        Path(meta).write_text(
+            "gene\tcnv_callable\tis_str_target\tstr_loci\n"
+            "CFH\tno\tno\t\n"          # breakpoint-blind (CaptureForge) -> low-confidence
+            "HP\tyes\tno\t\n"          # depth-callable -> callable
+            "CD209\tn/a\tyes\ttest_CD209:400-700;test_CD209:813-933\n")  # CaptureForge STR loci
+        bed = os.path.join(d, "targets.bed")
+        Path(bed).write_text("test_CFH\t400\t4532\tCFH|cnv\ntest_HP\t400\t2395\tHP|cnv\n"
+                             "test_CD209\t400\t933\tCD209|str\n")
+        return meta, bed
+
+    def test_cnv_annotate_labels_breakpoint_blind(self):
+        with tempfile.TemporaryDirectory() as d:
+            meta, bed = self._meta_and_bed(d)
+            cns = os.path.join(d, "SPIKE.call.cns")   # spike CFH + HP deletions
+            Path(cns).write_text("chromosome\tstart\tend\tgene\tlog2\tcn\n"
+                                 "test_CFH\t400\t4532\tCFH\t-0.7\t1\n"
+                                 "test_HP\t400\t2395\tHP\t-0.6\t1\n")
+            r = run([sys.executable, os.path.join(BIN, "cnv_annotate.py"), "--cns", cns,
+                     "--bed", bed, "--metadata", meta, "--outdir", d])
+            self.assertEqual(r.returncode, 0, r.stderr)
+            calls = Path(os.path.join(d, "cnv_calls.tsv")).read_text()
+            cfh = [l for l in calls.splitlines() if l.startswith("SPIKE\tCFH\t")][0]
+            self.assertIn("breakpoint_blind_low_confidence", cfh)
+            hp = [l for l in calls.splitlines() if l.startswith("SPIKE\tHP\t")][0]
+            self.assertIn("callable", hp)
+
+    def test_str_catalog_built_from_captureforge_loci(self):
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            meta, _ = self._meta_and_bed(d)
+            out = os.path.join(d, "str_catalog.json")
+            r = run([sys.executable, os.path.join(BIN, "build_str_catalog.py"),
+                     "--metadata", meta, "--motif", "GT", "--out", out])
+            self.assertEqual(r.returncode, 0, r.stderr)
+            regions = [e.get("ReferenceRegion") for e in json.loads(Path(out).read_text())]
+            self.assertTrue(any(str(x).startswith("test_CD209") for x in regions),
+                            f"CaptureForge STR locus not in catalog: {regions}")
+
+
 # ───────────────────────── layer 1: CLI ─────────────────────────
 class CliStages(unittest.TestCase):
     def cli(self, *args):
@@ -177,8 +224,24 @@ class CliStages(unittest.TestCase):
 
     def test_all_stage_subcommands_listed(self):
         r = self.cli("--help")
-        for st in ("align", "coverage", "call", "anno", "burden"):
+        for st in ("align", "coverage", "call", "cnv", "str", "paralog", "anno", "burden"):
             self.assertIn(st, r.stdout)
+
+    def test_cnv_help_mentions_callability(self):
+        r = self.cli("cnv", "--help")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("breakpoint_blind_low_confidence", r.stdout)
+
+    def test_paralog_help_mentions_info_fields(self):
+        r = self.cli("paralog", "--help")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("PARALOG_GENE", r.stdout)
+        self.assertIn("--input_vcf", r.stdout)
+
+    def test_str_help_mentions_catalog(self):
+        r = self.cli("str", "--help")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("--str_catalog", r.stdout)
 
     def test_call_help_states_passbam_semantics(self):
         r = self.cli("call", "--help")
@@ -213,6 +276,7 @@ class NextflowEntries(unittest.TestCase):
         cls.sheet = os.path.join(REPO, "test/data/test_samplesheet.csv")
         cls.anno_vcf = os.path.join(REPO, "results/stage10_paralog/paralog.annotated.vcf.gz")
         cls.burden_vcf = os.path.join(REPO, "results/stage11_annotation/annotated.vcf.gz")
+        cls.filtered_vcf = os.path.join(REPO, "results/stage7_filter/joint.filtered.vcf.gz")
 
     def _preview(self, *extra):
         return run([self.nf, "run", "main.nf", "-profile", "test", "-preview", *extra], cwd=REPO)
@@ -253,10 +317,35 @@ class NextflowEntries(unittest.TestCase):
             glob = os.path.join(d, "*.analysis.bam")
             for extra in (["--stage", "coverage"],
                           ["--stage", "call"],
-                          ["--stage", "call", "--caller", "deepvariant"]):
+                          ["--stage", "call", "--caller", "deepvariant"],
+                          ["--stage", "cnv"], ["--stage", "str"]):
                 r = self._preview(*extra, "--input_bams", glob, "--genome_fasta", self.genome,
                                   "--target_bed", self.bed, "--outdir", "results/standalone/_preview")
                 self.assertIn("SUCCESS", r.stdout + r.stderr, f"{extra}\n{r.stderr[-1500:]}")
+
+    def test_paralog_runs_live_and_writes_info_fields(self):
+        # paralog uses bcftools (no conda needed): run it for real and confirm the
+        # CaptureForge PARALOG_GENE/PARALOG_CONF labels land in the standalone VCF.
+        if not (os.path.exists(self.filtered_vcf) and shutil.which("bcftools")):
+            self.skipTest("need results/stage7_filter/joint.filtered.vcf.gz + bcftools")
+        with tempfile.TemporaryDirectory() as d:
+            out, work = os.path.join(d, "out"), os.path.join(d, "work")
+            r = run([self.nf, "run", "main.nf", "-profile", "test", "--stage", "paralog",
+                     "--input_vcf", self.filtered_vcf, "--target_bed", self.bed,
+                     "--outdir", out, "-work-dir", work], cwd=REPO)
+            self.assertIn("SUCCESS", r.stdout + r.stderr, r.stderr[-2000:])
+            ov = os.path.join(out, "stage10_paralog", "paralog.annotated.vcf.gz")
+            self.assertTrue(os.path.exists(ov))
+            hdr = run(["bcftools", "view", "-h", ov]).stdout
+            self.assertIn("ID=PARALOG_GENE", hdr)
+            self.assertIn("ID=PARALOG_CONF", hdr)
+            q = run(["bcftools", "query", "-f",
+                     "%INFO/PARALOG_GENE\t%INFO/PARALOG_CONF\n", ov]).stdout
+            self.assertTrue(any(tok not in (".", "") for line in q.splitlines()
+                                for tok in line.split("\t")),
+                            "no variant carried a PARALOG_GENE/PARALOG_CONF value")
+            for f in ("paralog_report.md", "paralog_provenance.json"):
+                self.assertTrue(os.path.exists(os.path.join(out, "stage10_paralog", f)), f)
 
     def test_burden_entry_runs_and_fails_loud(self):
         if not os.path.exists(self.burden_vcf):

@@ -60,3 +60,21 @@ recommended for `work/` (`--scratch_dir`).
 Every run emits `provenance.json` (tool versions, reference + resource releases/md5,
 git commit, quarantined samples + reasons). Pin Nextflow with `nextflowVersion` in
 `manifest{}` and the conda/container versions in `env/*.yml`.
+
+## 6. Validate-at-deployment checklist (stage subcommands)
+
+The stage subcommands (`callforge <stage>`, see the manual) were built and verified by
+`-preview` compile + component/CLI tests; the pure-Python paths were also run live
+locally (`burden`, `paralog`). Before any heavy standalone path is relied on for real
+data, run it **end-to-end once** here on the cluster (where the conda envs / Apptainer
+images exist natively). Preview-compile + component tests are sufficient for development
+gates; they are **not** sufficient to call a heavy path production-ready.
+
+- [ ] `anno` — the DB-swap path (VEP container + vcfanno/`callforge-annotate`).
+- [ ] `align` → `coverage` → `call` — the spine (bwa-mem2 / picard / mosdepth / GATK).
+- [ ] `cnv` (CNVkit / `callforge-cnv`) and `str` (ExpansionHunter / `callforge-str`).
+- [ ] Alternative engines: DeepVariant + GLnexus (`--caller deepvariant`),
+      regenie and SKAT-O (`--burden_engine regenie|skat`).
+
+Live-verified locally so far: full pipeline (`-profile test`), `callforge burden`
+(collapse), `callforge paralog` (PARALOG_GENE/PARALOG_CONF written).

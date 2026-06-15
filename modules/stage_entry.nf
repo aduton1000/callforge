@@ -21,8 +21,10 @@ process VALIDATE_STAGE_INPUTS {
     tuple path(vcf), path(tbi), emit: vcf   // pass-through gates the downstream module
 
     script:
-    def faiarg = fai.name   != 'NO_CACHE' ? "--fai ${fai}"           : ""
-    def shtarg = sheet.name != 'NO_CACHE' ? "--samplesheet ${sheet}" : ""
+    // any assets/NO_* placeholder => that optional check is skipped (distinct names
+    // for fai/sheet avoid an input-file-name collision when both are absent).
+    def faiarg = fai.name.startsWith('NO_')   ? "" : "--fai ${fai}"
+    def shtarg = sheet.name.startsWith('NO_') ? "" : "--samplesheet ${sheet}"
     """
     validate_stage_inputs.py --stage ${stage} --vcf ${vcf} ${faiarg} ${shtarg} ${opts}
     """

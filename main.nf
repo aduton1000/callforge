@@ -10,7 +10,7 @@ include { CALLFORGE } from './subworkflows/callforge.nf'
 
 // Stage-subcommand entry workflows (run ONE stage standalone via `--stage <name>` /
 // `callforge <stage>`). They reuse the same stage modules as the full pipeline.
-include { ANNO; BURDEN; ALIGN; COVERAGE; CALL } from './subworkflows/entries.nf'
+include { ANNO; BURDEN; ALIGN; COVERAGE; CALL; CNV; STR; PARALOG } from './subworkflows/entries.nf'
 
 def helpMessage() {
     log.info """
@@ -63,7 +63,10 @@ workflow {
         else if (params.stage == 'align')    { ALIGN()    }
         else if (params.stage == 'coverage') { COVERAGE() }
         else if (params.stage == 'call')     { CALL()     }
-        else { exit 1, "ERROR: unknown stage '${params.stage}'. Available: align, coverage, call, anno, burden" }
+        else if (params.stage == 'cnv')      { CNV()      }
+        else if (params.stage == 'str')      { STR()      }
+        else if (params.stage == 'paralog')  { PARALOG()  }
+        else { exit 1, "ERROR: unknown stage '${params.stage}'. Available: align, coverage, call, cnv, str, paralog, anno, burden" }
         return
     }
 
