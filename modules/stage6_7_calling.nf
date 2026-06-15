@@ -21,7 +21,8 @@ process HAPLOTYPECALLER {
     script:
     """
     gatk HaplotypeCaller -R ${fasta} -I ${bam} -O ${sample_id}.g.vcf.gz \\
-        -ERC GVCF -L ${bed} --interval-padding 100 -ploidy ${params.ploidy}
+        -ERC GVCF -L ${bed} --interval-padding 100 -ploidy ${params.ploidy} \\
+        --native-pair-hmm-threads ${task.cpus}
     """
 }
 
@@ -220,7 +221,7 @@ process GLNEXUS {
     tuple path("joint.vcf.gz"), path("joint.vcf.gz.tbi"), emit: vcf
     script:
     """
-    glnexus_cli --config DeepVariantWES --bed ${bed} *.g.vcf.gz > joint.bcf
+    glnexus_cli --threads ${task.cpus} --config DeepVariantWES --bed ${bed} *.g.vcf.gz > joint.bcf
     bcftools view joint.bcf | bgzip > joint.vcf.gz
     tabix -p vcf joint.vcf.gz
     """

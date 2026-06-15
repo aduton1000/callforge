@@ -104,7 +104,7 @@ feed in from the side.
 
 **Nextflow / profile model.** `main.nf` calls one subworkflow (`subworkflows/callforge.nf`)
 that wires modules in `modules/`. Behaviour is set by **profiles** composed on the command
-line: an execution profile (`test`, `mac_local`, `hpc_slurm`) plus an environment engine
+line: an execution profile (`test`, `local`, `hpc_slurm`) plus an environment engine
 (`conda`, `docker`, `apptainer`). Each process declares its own pinned conda env
 (`env/*.yml`) or a pinned container (VEP, hap.py), so `-profile ...,conda` or `,apptainer`
 builds exactly what each stage needs.
@@ -178,7 +178,7 @@ apptainer build callforge.sif env/callforge.def
 export APPTAINER_BINDPATH=/data/refs,/data/annotation_db,$HOME/.vep   # mount resources
 
 # run
-nextflow run main.nf -profile hpc_slurm,apptainer -params-file params.full.yaml \
+callforge run -profile hpc_slurm,apptainer -params-file params.full.yaml \
   --slurm_partition compute \
   --slurm_account mylab \
   --scratch_dir /scratch/$USER
@@ -415,23 +415,82 @@ Feed the result back through validation (`validate_samplesheet.py`, run automati
 Stage 0) before a full run. Remember: **phenotype is required only for the burden stage** —
 without it the pipeline still produces the annotated joint callset and simply skips burden.
 
-## 5.2 CaptureForge handoff — `--target_bed` (+ metadata)
+## 5.2 Target BED & gene metadata — CallForge runs without CaptureForge
 
-Point CallForge at CaptureForge's as-built outputs:
+**The minimum to run CallForge is FASTQs + a reference + a target BED.** The whole spine —
+align → coverage/QC → call → annotation → cohort QC → GIAB → per-gene burden — needs nothing
+from CaptureForge. The CaptureForge **per-gene metadata is optional enrichment** that the
+*interpretation layer* (CNV / STR / paralog / gene-set burden) consumes; absent it, those
+features degrade gracefully rather than failing.
 
-```yaml
-target_bed:       /path/captureforge/results/full_run/stage9_qc/final_covered_targets.bed
-captureforge_dir: /path/captureforge/results/full_run   # auto-finds metrics.json + baits.csv
-paralog_genes:    "CD209,CASP1,CR1,HP,CFH"
+**What each metadata field unlocks, and the behavior when absent:**
+
+| Metadata field | Unlocks | When absent |
+|:------------------|:----------------------------------|:-----------------------------------|
+| `is_str_target` + `str_loci` | STR genotyping (ExpansionHunter catalog) | STR stage produces nothing / skips |
+| `is_paralog` | paralog-aware flagging (`PARALOG_GENE`/`CONF`) | no paralog flags written |
+| `is_cnv_target` | CNV calls labelled as CNV targets | CNV calls still made, just unlabelled |
+| `cnv_callable` (+`_reason`) | CNV calls labelled `callable` / `breakpoint_blind_low_confidence` | CNV calls labelled `unknown_confidence` |
+| `burden_group` | gene-**set** burden (collapse by group) | burden collapses **per-gene only** |
+| `off_target_frac`, `low_coverage` | specificity / coverage QC annotations | left blank (not assessed) |
+
+`--target_bed` is always required (it defines the regions). The BED's column-4 name uses
+`GENE|class` (e.g. `ATP2B4|coding`, `GYPC|cnv`, `HMOX1|str`); classes seed the per-gene table.
+
+**The `gene_metadata.tsv` schema** (one row per gene; produced by either on-ramp below):
+
+```text
+gene  classes  n_intervals n_coding n_promoter n_anchor n_str n_cnv  is_cnv_target cnv_callable cnv_callable_reason  is_str_target str_loci  is_paralog off_target_frac low_coverage burden_group
 ```
 
-`final_covered_targets.bed` uses `GENE|class` names (e.g. `ATP2B4|coding`,
-`GYPC|cnv`). `metrics.json` supplies CNV callability; `baits.csv` an off-target signal.
-If CaptureForge outputs are absent, supply `--gene_metadata` (a per-gene TSV),
-`--paralog_genes`, and `--str_catalog` directly. `ingest_captureforge.py` produces
-`gene_metadata.tsv` with columns `gene, classes, …, is_cnv_target, cnv_callable,
-cnv_callable_reason, is_str_target, str_loci, is_paralog, off_target_frac, low_coverage,
-burden_group`.
+A hand-authored **minimal example** (two genes: a paralog flag on `CD209`, a burden group on
+both, everything design-specific left at its safe default):
+
+```text
+gene	classes	n_intervals	n_coding	n_promoter	n_anchor	n_str	n_cnv	is_cnv_target	cnv_callable	cnv_callable_reason	is_str_target	str_loci	is_paralog	off_target_frac	low_coverage	burden_group
+CD209	coding	1	1	0	0	0	0	no	n/a		no		yes			COMPLEMENT
+CFH	cnv,coding	2	1	0	0	0	1	yes	unknown	user_declared_not_design_derived	no		no			COMPLEMENT
+```
+
+**Two on-ramps — both emit this identical schema:**
+
+1. **Generate it (no CaptureForge):** `callforge metadata` builds `gene_metadata.tsv` from a
+   gene list and/or the target BED, plus your own declarations:
+
+   ```bash
+   callforge metadata \
+       --bed /panel/targets.bed \
+       --cnv-genes CFH,CR1 \
+       --paralog-genes CD209,CFH \
+       --str-loci str_loci.tsv \
+       --burden-groups burden_groups.tsv \
+       --out-tsv gene_metadata.tsv
+   ```
+
+   It writes a reconciliation report (genes in the BED with no metadata, declared genes absent
+   from the BED with near-miss hints, duplicates) and **exits non-zero on hard problems**
+   (duplicate gene, malformed STR locus). It **never invents** the fields it cannot know:
+   `cnv_callable` is set to `unknown` (`cnv_callable_reason=user_declared_not_design_derived`),
+   `off_target_frac`/`low_coverage` are left blank, and **`burden_group` is never auto-assigned**
+   (blank → per-gene burden), exactly as `phenotype` is never auto-filled (§5.1). Then pass it
+   with `--gene_metadata gene_metadata.tsv` (with `--paralog_genes` / `--str_catalog` as needed).
+
+2. **From CaptureForge:** point CallForge at the as-built handoff and `ingest_captureforge.py`
+   derives the same table (including design-derived callability):
+
+   ```yaml
+   target_bed:       /path/captureforge/results/full_run/stage9_qc/final_covered_targets.bed
+   captureforge_dir: /path/captureforge/results/full_run   # auto-finds metrics.json + baits.csv
+   paralog_genes:    "CD209,CASP1,CR1,HP,CFH"
+   ```
+
+**The one genuine complement.** A generic generator can reproduce most of the enrichment, but
+**not** CaptureForge's `cnv_callable` / breakpoint-blindness labels: those encode
+**capture-design-specific** knowledge (which CNV breakpoints the bait layout can actually
+resolve) that no gene list or annotation can recreate. `callforge metadata` honestly marks CNV
+callability `unknown`; CaptureForge's design-derived callability is its value-add.
+*(Auto-flagging paralogs/STRs from public databases is a planned future enhancement; today
+those flags are user-declared.)*
 
 ## 5.3 Reference — `--genome_fasta`
 
@@ -529,7 +588,7 @@ params unset.
 
 Set parameters via `-params-file params.yaml` (see `params.example.yaml`) or `--key value`.
 Profiles set executor + resource ceilings: **`test`** (3–4 synthetic samples, minutes),
-**`mac_local`** (full, one machine), **`hpc_slurm`** (SLURM + Apptainer/shared-conda).
+**`local`** (full, one machine; `mac_local` is a deprecated alias), **`hpc_slurm`** (SLURM + Apptainer/shared-conda).
 
 **Key tunables (real defaults).**
 
@@ -565,6 +624,40 @@ The container defaults are `ensemblorg/ensembl-vep:release_110.0` (VEP) and
 > **Hard-filter thresholds are the GATK WGS/WES defaults.** Revisit them on real targeted
 > data (panel Ti/Tv, pass rates, and QUAL/DP distributions guide tuning).
 
+## 7.1 Compute resources
+
+CallForge uses Nextflow's **per-process** resource model, not one global `--threads`: each
+stage declares the CPUs/memory it needs via a resource **label** (`small`/`medium`/`large`,
+plus `index`/`align`), and the tools receive those cores — e.g. `bwa-mem2 mem -t`, `samtools
+sort -@`, `fastp --thread`, `mosdepth -t`, `CNVkit -p`, `GenomicsDBImport --reader-threads`,
+`HaplotypeCaller --native-pair-hmm-threads`, `DeepVariant --num_shards`, `GLnexus --threads`,
+`VEP --fork`, `ExpansionHunter --threads` (all wired to the process `cpus`). A few tools are
+single-threaded by design (Picard MarkDuplicates/CollectHsMetrics, GATK GenotypeGVCFs).
+
+**Single-machine ceilings (the laptop knob).** On the `local` profile, total concurrent use
+is capped by two params — set "use at most N cores / M GB", don't micromanage each tool:
+
+| Param | Default (`local`) | Meaning |
+|:--------------|:--------|:-----------------------------------------------|
+| `--max_cpus` | `8` | max total cores CallForge uses at once on this machine |
+| `--max_memory` | `24.GB` | max total memory used at once |
+
+```bash
+# a 4-core / 8 GB laptop:
+callforge run -profile local,conda -params-file params.full.yaml \
+    --max_cpus 4 --max_memory 8.GB
+```
+
+These feed the `local` executor's total `cpus`/`memory`, and every per-stage request is
+**clamped** to them (`[request, ceiling].min()`), so no single task ever asks for more than
+the machine is allowed to use. The `hpc_slurm` profile instead requests resources **per SLURM
+job** (e.g. `index`/`align` get 16 cores) and `--max_cpus`/`--max_memory` bound per-job sizes.
+
+**Power-user escape hatches** (Nextflow-native): override one process with
+`-process.cpus=N`, or supply a custom config with `-c my.config` (e.g. a `withName:` block to
+retune a specific process). The defaults live in `conf/base.config` (per-label) and each
+profile's `conf/*.config`.
+
 # 8. Running — step-by-step scenarios
 
 All multi-flag commands use backslash continuation (one flag per line). On a local machine
@@ -582,7 +675,7 @@ is a thin wrapper over `nextflow run`; every flag after it is passed straight to
 ```bash
 # runs the full CallForge pipeline (FASTQ -> annotated joint callset -> burden)
 callforge run \
-    -profile mac_local,conda \
+    -profile local,conda \
     -params-file params.full.yaml
 ```
 
@@ -611,7 +704,7 @@ works only for users with repo access until it is made public; always pin a vers
 ```bash
 # runs CallForge from inside the clone
 nextflow run main.nf \
-    -profile mac_local,conda \
+    -profile local,conda \
     -params-file params.full.yaml
 ```
 
@@ -623,12 +716,34 @@ In every tier, `params.full.yaml` supplies the **reference** (`genome_fasta`), t
 **target BED + CaptureForge handoff** (`target_bed` / `captureforge_dir`), the
 **annotation resources** (resource directories), and the **sample sheet** (`input`).
 
+### Understanding profiles
+
+A CallForge run composes **two** profiles with a comma — an **execution** profile and a
+**packaging** profile:
+
+- **Execution** (where it runs): **`local`** = this single machine, **`hpc_slurm`** = a
+  SLURM cluster. `local` works on **any single Linux or macOS machine (Windows via WSL2)** —
+  it is *not* Mac-specific and *not* developer-only (the name `mac_local` is a deprecated
+  alias kept for backward compatibility). `local` caps total resource use at
+  `--max_cpus`/`--max_memory` (§Compute resources); `hpc_slurm` requests resources per SLURM job.
+- **Packaging** (how dependencies are provided): **`conda`**, **`docker`**, or **`apptainer`**
+  — Nextflow activates the right per-stage env/container automatically (§4.4).
+
+```bash
+callforge run -profile local,conda      -params-file params.full.yaml   # this machine, conda envs
+callforge run -profile hpc_slurm,apptainer -params-file params.full.yaml # SLURM cluster, Apptainer images
+```
+
+`local,conda` = "run here, build each stage's conda env"; `hpc_slurm,apptainer` = "submit
+SLURM jobs, run each stage in its Apptainer image". Mix to taste (e.g. `local,docker` for the
+VEP/hap.py containers on a workstation).
+
 ## 8.1 Quickstart (test profile)
 
 ```bash
 # build a tiny fixture, then run all 16 stages of CallForge in minutes
 bash test/make_test_data.sh
-callforge run -profile test,docker          # or: nextflow run main.nf -profile test,docker
+callforge run -profile test,docker
 ```
 
 This builds a tiny self-contained fixture (mini-genome + synthetic reads) and runs all 16
@@ -642,9 +757,9 @@ stages in minutes. Use it to confirm your install.
 # 2. confirm resources discover + pass the scope gate; fetch genome-wide
 #    gnomAD/ClinVar if missing (§6.4); supply a genome-wide dbSNP
 
-# 3. run CallForge (authoring machine); raw form: nextflow run main.nf …
+# 3. run CallForge (full pipeline)
 callforge run \
-  -profile mac_local,conda \
+  -profile local,conda \
   -params-file params.full.yaml
 
 # 3'. or the cluster
@@ -666,7 +781,7 @@ skip. Everything else (annotated VCF, per-variant TSV, CNV/STR/paralog) is produ
 ## 8.4 Burden / association run (with phenotype)
 
 ```bash
-nextflow run main.nf \
+callforge run \
   -profile hpc_slurm,apptainer \
   -params-file params.full.yaml \
   --run_burden true \
@@ -687,7 +802,7 @@ Manhattan plots and the validity caveats (§11).
 Swap the CaptureForge handoff — no code change:
 
 ```bash
-nextflow run main.nf -profile mac_local,conda \
+callforge run -profile local,conda \
   --input samplesheet.csv \
   --genome_fasta /ref/GRCh38_noalt.fa \
   --target_bed   /panelB/final_covered_targets.bed \
@@ -697,7 +812,7 @@ nextflow run main.nf -profile mac_local,conda \
 ## 8.6 A different organism
 
 ```bash
-nextflow run main.nf -profile mac_local,conda \
+callforge run -profile local,conda \
   --input samplesheet.csv \
   --genome_build <BUILD> \
   --genome_fasta /ref/<species>_noalt.fa \
@@ -736,7 +851,7 @@ to a shared path and bound into Apptainer.
 Add a GIAB control to the sample sheet and supply truth:
 
 ```bash
-nextflow run main.nf -profile mac_local,conda -params-file params.full.yaml \
+callforge run -profile local,conda -params-file params.full.yaml \
   --giab_control_id HG002 \
   --giab_truth_vcf /giab/HG002_v4.2.1_benchmark.vcf.gz \
   --giab_truth_bed /giab/HG002_v4.2.1_benchmark.bed
@@ -808,7 +923,7 @@ callforge anno \
     --genome_fasta /refs/GRCh38_noalt.fa \
     --target_bed /captureforge/final_covered_targets.bed \
     --resource_dirs /refs/annotation_db_2025_06 \
-    -profile mac_local,conda
+    -profile local,conda
 # -> results/standalone/anno_<timestamp>/stage11_annotation/annotated.vcf.gz
 #    + variants.flat.tsv, anno_report.md, anno_provenance.json
 ```
@@ -826,7 +941,7 @@ callforge burden \
     --burden_csq 'frameshift_variant,stop_gained,splice_acceptor_variant,splice_donor_variant' \
     --burden_engine regenie \
     --cohort_qc_json results/stage12_cohortqc/cohort_qc.json \
-    -profile mac_local,conda
+    -profile local,conda
 # -> results/standalone/burden_<timestamp>/stage14_burden/burden_results.tsv
 #    (engine column stamps the method) + burden_report.md, burden_provenance.json
 ```
@@ -841,7 +956,7 @@ callforge cnv \
     --target_bed /captureforge/final_covered_targets.bed \
     --cf_metrics_json /captureforge/results/full_run/stage9_qc/metrics.json \
     --cnv_method hybrid --cnv_segment_method cbs \
-    -profile mac_local,conda
+    -profile local,conda
 # -> results/standalone/cnv_<timestamp>/stage8_cnv/cnv_calls.tsv
 #    (each call labelled callable | breakpoint_blind_low_confidence) + cnv_report.md
 ```

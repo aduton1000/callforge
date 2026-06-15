@@ -125,6 +125,13 @@ def cmd_resources(rest):
     return _run_bin_via_argv("discover_resources.py", rest)
 
 
+def cmd_metadata(rest):
+    # generate gene_metadata.tsv WITHOUT CaptureForge (same schema the stages consume).
+    # raw form `python3 bin/make_gene_metadata.py …` still works.
+    mod = _load_bin("make_gene_metadata.py")
+    return mod.main(rest) or 0
+
+
 # ----------------------------------------------------------------- stage subcommands
 # Each stage runs ONE pipeline stage standalone via `nextflow run main.nf --stage <name>`,
 # reusing the SAME modules as the full pipeline. The CLI injects `--stage <name>` and
@@ -316,6 +323,7 @@ def cmd_stage(stage, rest):
 SUBCOMMANDS = {
     "run": (cmd_run, "run the full CallForge pipeline (wrapper over `nextflow run`)"),
     "samplesheet": (cmd_samplesheet, "scaffold/assemble a sample sheet (modes A/B/C)"),
+    "metadata": (cmd_metadata, "generate gene_metadata.tsv without CaptureForge"),
     "resources": (cmd_resources, "resource discovery / genomic-scope checks"),
 }
 # stage subcommands (run one stage standalone, reusing the pipeline's modules)
