@@ -1,138 +1,199 @@
 # CallForge
 
-**A disease- and organism-agnostic Nextflow DSL2 pipeline that turns demultiplexed
-paired-end FASTQs from a hybridization-capture panel into a high-quality,
-joint-genotyped, annotated, QC'd callset — SNV/indel, CNV, STR and paralog-aware —
-and on to a rare-variant burden/association layer.**
+**CallForge — a reproducible Nextflow pipeline for targeted-capture germline analysis:
+FASTQ → annotated joint callset (SNV/indel, CNV, STR, paralog-aware) with cohort QC, GIAB
+benchmarking, and rare-variant burden testing. Pairs with CaptureForge; runs standalone.**
 
-CallForge is the analysis counterpart to **[CaptureForge](../captureforge)** (probe
-design) and consumes its handoff: `final_covered_targets.bed` as the target, plus
-per-gene metadata (design class, CNV callability, paralog flags, STR loci, burden
-groups) that drives the matching downstream steps.
+## What it is
 
-Immediate use: the 59-gene human malaria-susceptibility panel on African-ancestry
-DBS samples. It generalizes to any panel/cohort/organism by changing inputs + config.
+CallForge takes demultiplexed paired-end FASTQs from a hybridization-capture panel through
+alignment → per-sample QC (flag/quarantine) → SNV/indel joint calling → CNV / STR /
+paralog-aware analysis → annotation → cohort QC → GIAB benchmarking → rare-variant burden
+testing — disease- and organism-agnostic, driven by inputs and config.
 
-> **Build status:** ALL stages (0–15) implemented and **green end-to-end on the `test`
-> profile** (`-profile test,docker`, 88 processes). Operations guide: `docs/manual.md`.
-> Summary of what's machinery-proven on synthetic data vs what needs the real cohort,
-> plus the real-run checklist, is in `docs/decisions.md`.
->
-> Stage detail:
-> Stage 0 (scaffold, resource discovery + genomic-scope gate, reference invariant),
-> Stages 1–5 (raw QC → fastp → bwa-mem2 → MarkDuplicates → BQSR(graceful) → HsMetrics +
-> mosdepth per-gene depth → per-sample QC gate with flag/quarantine scorecard),
-> Stages 6–7 (HaplotypeCaller GVCF → GenomicsDBImport/CombineGVCFs → GenotypeGVCFs →
-> GATK hard-filters; DeepVariant+GLnexus as a container-only alternative; quarantined
-> samples verified excluded from joint calling), and Stages 8–10 (CNVkit with
-> CaptureForge callability labels propagated per call; ExpansionHunter STR genotyping;
-> paralog-aware flagging writing PARALOG_GENE + confidence into the VCF), and Stage 11
-> (VEP consequence/SIFT/PolyPhen/canonical via the official VEP container, then
-> manifest-driven vcfanno for gnomAD-AFR AF / dbSNP / ClinVar + PhyloP, with
-> per-resource chr-reconciliation and a fail-loud annotation-landing check), and Stages
-> 12–13 (somalier relatedness + sex from off-target X/Y + ancestry PCA + missingness;
-> hap.py GIAB benchmarking restricted to the panel BED = on-target), and Stage 14
-> (rare+functional filter → collapse by gene & CaptureForge gene-set → gene-burden test
-> with covariates + ancestry PCs → QQ/Manhattan/λ; collapse engine for small-N/test,
-> regenie + SKAT-O wired for production; gated on phenotype), and Stage 15 (MultiQC +
-> self-contained cohort QC dashboard with all captioned plots + provenance.json).
+**It runs standalone.** The minimum inputs are **FASTQs + a reference + a target BED**.
+**[CaptureForge](https://github.com/aduton1000/captureforge) is optional enrichment, not a
+prerequisite** — its per-gene metadata improves the interpretation layer (CNV callability,
+STR loci, paralog flags, burden gene-sets), and `callforge metadata` generates an equivalent
+table when you don't have CaptureForge. *Runs standalone; better with CaptureForge.*
 
----
+## Key features
 
-## Engineering stance
+- **Variant classes:** SNV/indel (GATK HaplotypeCaller→GenomicsDB→GenotypeGVCFs, or
+  DeepVariant+GLnexus), CNV (CNVkit), STR (ExpansionHunter), paralog-aware flagging
+  (`INFO/PARALOG_GENE`/`PARALOG_CONF`).
+- **Per-sample QC gate** that **flags & quarantines** failing samples (depth, dup, on-target,
+  contamination, sex) — never silently drops data.
+- **Manifest-driven annotation** (VEP + vcfanno: gnomAD-AFR / ClinVar / dbSNP + PhyloP) with a
+  **genomic-scope gate** that fails loud on a region-limited DB, and chr-reconciliation.
+- **GIAB benchmarking** (hap.py) restricted to the panel BED (on-target only).
+- **Rare-variant burden** collapsed by gene & gene-set, with an **ancestry-PC stability gate**.
+- **Disease/organism-agnostic**; resources are **discovered, not downloaded**.
+- **The `callforge` CLI** front door, **ten per-stage subcommands** (run one stage standalone),
+  and per-process **compute controls** (`--max_cpus`/`--max_memory`).
 
-- **Stand on validated foundations.** Subworkflows are adapted from the validated
-  nf-core/sarek + nf-core/raredisease patterns (alignment, dedup/BQSR,
-  HaplotypeCaller/DeepVariant, VEP, CNV, STR); the bespoke layers (CaptureForge
-  handoff, paralog-aware handling, burden, resource auto-discovery, QC dashboard)
-  are built here. `docs/reuse.md` tracks reused-vs-built per stage.
-- **Reference invariant (inherited from CaptureForge):** align to the **same GRCh38
-  no-alt primary assembly** the design used; assert no alt/decoy contigs and a
-  matching reference/BED build — **fail loud** (`bin/check_reference_invariant.py`).
-- **QC at every stage with plots**, each carrying a one-line plain caption; gates
-  **flag & quarantine** failing samples — never silently drop data.
-- **Discover, don't download.** Local annotation/known-sites resources are found and
-  validated (`bin/discover_resources.py`); nothing is fetched unless missing **and**
-  required **and** opted in (`--allow_download`).
-- **Genomic-scope gate.** Discovery validates not just build/index but whether each
-  annotation DB's data actually **spans the target panel**. A found-but-region-limited
-  DB (e.g. a single-locus gnomAD) is flagged `unfit_scope` and **fails loud** — it
-  would otherwise silently return "no AF / no ClinVar" outside its region and corrupt
-  rare-variant filtering and burden testing. Waive with `--ignore_unfit_resources`
-  (not advised); tune with `--scope_min`.
+The authoritative guide is **[`docs/manual/callforge_manual.md`](docs/manual/callforge_manual.md)**
+(rendered: [`callforge_manual.pdf`](docs/manual/callforge_manual.pdf)) — this README is the front door.
 
-## Quick start
+## Install
+
+**Local — any single Linux or macOS machine (Windows via WSL2):**
 
 ```bash
-# 1. environments (Apple Silicon: prefix CONDA_SUBDIR=osx-64 for x86-only tools)
-mamba env create -f env/callforge.yml          # core
-# specialized envs created on demand: env/{annotate,cohortqc,str,cnv,happy,burden,deepvariant}.yml
-
-# 2. tiny end-to-end sanity run (generates the fixture, runs in minutes)
-bash test/make_test_data.sh
-nextflow run main.nf -profile test,conda
-
-# 3. full run (point --input at your cohort sample sheet)
-nextflow run main.nf -profile mac_local,conda -params-file params.full.yaml   # authoring Mac
-nextflow run main.nf -profile hpc_slurm,apptainer -params-file params.full.yaml # production cluster
+git clone https://github.com/aduton1000/callforge.git
+cd callforge
+mamba env create -f env/callforge.yml   # core env; per-stage envs build on demand
+pip install -e .                        # registers the `callforge` command on PATH
+callforge --version
 ```
 
-Required params: `--input`, `--genome_fasta` (no-alt), `--target_bed`. See
-`params.example.yaml` and `nextflow.config` for the full surface.
+You also need **Nextflow (≥23.10, Java 17+)** and either conda/mamba or a container engine.
+A run composes **two** profiles: an **execution** profile (`local` = this machine, `hpc_slurm`
+= a SLURM cluster) and a **packaging** profile (`conda` / `docker` / `apptainer` = how
+dependencies are provided) — e.g. `-profile local,conda`. `local` is **not** Mac-specific
+(`mac_local` remains a deprecated alias). VEP and hap.py always run from their official
+containers.
+
+**HPC:** shared conda envs + Apptainer + an Lmod module put `callforge` on PATH cluster-wide —
+see **[`docs/hpc_deployment.md`](docs/hpc_deployment.md)**.
+
+> The raw forms still work (`nextflow run main.nf …`, `python3 bin/…`), but `callforge` is the
+> recommended interface. Once the repo is public (or for users with access), you can also run it
+> straight from GitHub: `nextflow run aduton1000/callforge -r <tag> -profile local,conda …`.
+
+## Usage — the `callforge` CLI
+
+```text
+callforge run          run the full pipeline (wrapper over `nextflow run`)
+callforge samplesheet  scaffold/assemble the sample sheet (pairs FASTQs, joins metadata)
+callforge metadata     generate gene_metadata.tsv WITHOUT CaptureForge
+callforge resources    annotation-resource discovery / genomic-scope checks
+callforge --help | --version
+```
+
+**Ten per-stage subcommands** run a single stage standalone on its own inputs (e.g. re-annotate
+after a DB update, re-burden with a new threshold), writing to a **non-destructive
+`results/standalone/<stage>_<timestamp>/`** with their own report + provenance:
+
+| Subcommand | Purpose |
+|:-----------|:--------|
+| `align`    | FASTQ → analysis-ready BAM(s) (bwa-mem2 + dedup + BQSR) + alignment QC |
+| `coverage` | BAM(s) → coverage/enrichment metrics + per-sample QC gate (pass/quarantine) |
+| `call`     | QC-pass BAM(s) → joint hard-filtered VCF (GATK, or `--caller deepvariant`) |
+| `cnv`      | BAM(s) → CNVkit calls, labelled by CaptureForge callability |
+| `str`      | BAM(s) → ExpansionHunter genotypes on the (CaptureForge) STR catalog |
+| `paralog`  | VCF → paralog-aware flagging (`PARALOG_GENE`/`PARALOG_CONF`) |
+| `anno`     | re-annotate a VCF (VEP + vcfanno DBs + PhyloP), e.g. after a DB update |
+| `cohortqc` | somalier relatedness/sex + ancestry PCA + missingness |
+| `giab`     | hap.py precision/recall/F1 vs GIAB truth, restricted to the panel BED |
+| `burden`   | re-run rare-variant burden with new thresholds/engine on an annotated VCF |
+
+Run `callforge <stage> --help` for that stage's required + optional input files.
+
+## Examples
+
+**Quickstart (test profile — a tiny synthetic fixture, runs in minutes):**
+
+```bash
+bash test/make_test_data.sh
+callforge run -profile test,docker
+```
+
+**Build a sample sheet** (pair a FASTQ directory and join your clinical metadata):
+
+```bash
+callforge samplesheet \
+    --fastq-dir /data/fastqs \
+    --metadata clinical.csv \
+    --out sample_sheet.csv
+```
+
+**Full cohort run** (`-params-file` supplies reference, target BED, resources, sample sheet):
+
+```bash
+callforge run \
+    -profile local,conda \
+    -params-file params.yaml
+```
+
+**Re-annotate after an annotation-database update** (only Stage 11, non-destructive):
+
+```bash
+callforge anno \
+    --input_vcf results/stage10_paralog/paralog.annotated.vcf.gz \
+    --genome_fasta /refs/GRCh38_noalt.fa \
+    --target_bed /panel/targets.bed \
+    --resource_dirs /refs/annotation_db_2025_06 \
+    -profile local,conda
+```
+
+**Re-run burden with a new AF cutoff and engine** (reuse the annotated callset):
+
+```bash
+callforge burden \
+    --input_vcf results/stage11_annotation/annotated.vcf.gz \
+    --input sample_sheet.csv \
+    --target_bed /panel/targets.bed \
+    --burden_engine regenie \
+    --burden_af_max 0.005 \
+    -profile local,conda
+```
+
+**Without CaptureForge** — generate the panel metadata, then run:
+
+```bash
+callforge metadata \
+    --bed /panel/targets.bed \
+    --paralog-genes CD209,CFH \
+    --burden-groups burden_groups.tsv \
+    --out-tsv gene_metadata.tsv
+# then: callforge run -profile local,conda -params-file params.yaml \
+#         --gene_metadata gene_metadata.tsv
+```
+
+Commands are copy-pasteable; required pipeline params are `--input`, `--genome_fasta`,
+`--target_bed` (see `params.example.yaml`).
 
 ## Inputs
 
-| Input | Notes |
-|-------|-------|
-| **Sample sheet** (CSV) | `sample_id,fastq_1,fastq_2,sex?,phenotype?,covariate_*?,batch?`. `phenotype` is required only for the burden layer; without it the pipeline stops at the annotated callset and skips burden with a clear message. |
-| **Target BED** | CaptureForge `final_covered_targets.bed` (as-built coverage). |
-| **CaptureForge metadata** | `metrics.json` + `baits.csv` (auto-found under `--captureforge_dir`), or supply `--gene_metadata` / `--paralog_genes` / `--str_catalog` directly. |
-| **Reference** | The no-alt GRCh38 primary assembly the panel was designed against. |
-| **GIAB** (optional) | A control sample in the sheet + GIAB truth VCF/BED (v4.2.1) for benchmarking restricted to the panel BED. |
+- **Sample sheet** (CSV): `sample_id,fastq_1,fastq_2,sex?,phenotype?,covariate_*?,batch?` —
+  `phenotype` is required only for burden. Build it with `callforge samplesheet`.
+- **Target BED** — the panel regions (CaptureForge `final_covered_targets.bed`, or any BED).
+- **Reference** — the no-alt GRCh38 primary assembly the panel was designed against.
+- **CaptureForge metadata** (optional) — `--captureforge_dir` (auto-finds `metrics.json` +
+  `baits.csv`), or generate an equivalent `gene_metadata.tsv` with `callforge metadata`.
+- **Annotation databases** (optional) — discovered from `--resource_dirs`
+  (`callforge resources`); fetch a panel slice with `bin/fetch_annotation_dbs.sh`.
 
-## Pipeline stages (0–15)
+## Outputs
 
-0. Inputs & resource discovery · 1. Raw-read QC · 2. Trimming · 3. Alignment ·
-4. Post-alignment (dedup/BQSR/HsMetrics/coverage) · 5. Per-sample QC gate &
-quarantine · 6. SNV/indel joint calling · 7. Hard-filtering · 8. CNV ·
-9. STR · 10. Paralog-aware handling · 11. Annotation (VEP + vcfanno) ·
-12. Cohort QC (relatedness/ancestry) · 13. Callset QC & GIAB validation ·
-14. Burden/association · 15. Reporting (MultiQC + cohort dashboard).
+Annotated joint VCF (`stage11_annotation/annotated.vcf.gz`) + flattened per-variant TSV
+(`variants.flat.tsv`); CNV (`cnv_calls.tsv`), STR (`str_calls.tsv`), paralog
+(`paralog.annotated.vcf.gz`); a self-contained **cohort QC dashboard**
+(`cohort_qc_dashboard.html`); GIAB metrics (`happy.summary.csv`); burden results
+(`burden_results.tsv`); and `provenance.json` (tool versions, resources, git commit).
 
-Each stage writes metrics (JSON/TSV), generates captioned plots (PNG+SVG), and
-feeds MultiQC + a self-contained cohort QC dashboard.
+## CaptureForge pairing
 
-## Profiles
+CallForge is the **analysis** half of a pair: **[CaptureForge](https://github.com/aduton1000/captureforge)**
+does the capture **design** (probe/bait design, target definition, specificity, QC) and CallForge
+does the downstream analysis. CaptureForge's handoff (`final_covered_targets.bed` + per-gene
+metadata, including design-specific CNV callability) enriches CallForge — but CallForge runs
+without it.
 
-- `test` — 3 samples, a few small genes, a subset reference; minutes on a Mac.
-- `mac_local` — full pipeline on one macOS machine (heavy steps slow; see Apple-Silicon note).
-- `hpc_slurm` — SLURM + Apptainer (or shared conda at `/hpc/opt/conda`); see `docs/hpc_deployment.md`.
+## Honesty note
 
-Compose with a container/engine profile: `-profile test,conda` / `,docker` / `,apptainer`.
+The shipped test outputs and the bundled `docs/cohort_qc_dashboard.html` are generated from a
+**synthetic test cohort** — they demonstrate the machinery and plots, **not** real-data quality
+or results. Some heavy/alternative paths (DeepVariant+GLnexus, regenie/SKAT-O, the full
+align→coverage→call spine) are verified by preview/compile + component tests and carry a
+**validate-at-deployment checklist** (`docs/hpc_deployment.md`) for one live end-to-end run
+before being relied on for real data.
 
-### Apple Silicon (arm64)
+## Docs · License · Citation
 
-Some bioconda tools (gatk4, bwa-mem2, deepvariant, expansionhunter) lack
-`osx-arm64` builds. Create envs under Rosetta so x86_64 builds resolve:
-
-```bash
-CONDA_SUBDIR=osx-64 mamba env create -f env/callforge.yml
-```
-
-The run report flags which stages executed x86-emulated. Linux/HPC is native.
-
-## Repository layout
-
-```
-main.nf  nextflow.config  params.example.yaml  params.full.yaml
-conf/{base,test,mac_local,hpc_slurm}.config
-modules/        # one .nf per process group (stage0_inputs.nf, ...)
-subworkflows/   # callforge.nf — top-level orchestration
-bin/            # discover_resources.py, check_reference_invariant.py, ingest_captureforge.py, ...
-env/            # pinned conda envs + Dockerfile + Apptainer def
-assets/  docs/  test/   results/(gitignored)
-```
-
-## License
-
-MIT — see `LICENSE`. Cite via `CITATION.cff`.
+- **Manual:** [`docs/manual/callforge_manual.md`](docs/manual/callforge_manual.md) ·
+  [PDF](docs/manual/callforge_manual.pdf) · HPC: [`docs/hpc_deployment.md`](docs/hpc_deployment.md)
+  · design notes: `docs/decisions.md`, `docs/reuse.md`.
+- **License:** MIT — see [`LICENSE`](LICENSE).
+- **Citation:** see [`CITATION.cff`](CITATION.cff).
