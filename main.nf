@@ -8,9 +8,9 @@ nextflow.enable.dsl = 2
 
 include { CALLFORGE } from './subworkflows/callforge.nf'
 
-// Stage-subcommand entry workflows (run ONE stage standalone via `-entry <stage>` /
+// Stage-subcommand entry workflows (run ONE stage standalone via `--stage <name>` /
 // `callforge <stage>`). They reuse the same stage modules as the full pipeline.
-include { ANNO; BURDEN } from './subworkflows/entries.nf'
+include { ANNO; BURDEN; ALIGN; COVERAGE; CALL } from './subworkflows/entries.nf'
 
 def helpMessage() {
     log.info """
@@ -58,9 +58,12 @@ workflow {
                     "Pass --outdir <dir> (the `callforge <stage>` CLI auto-creates " +
                     "results/standalone/<stage>_<timestamp>/), or --in_place true to update results/ in place."
         }
-        if      (params.stage == 'anno')   { ANNO()   }
-        else if (params.stage == 'burden') { BURDEN() }
-        else { exit 1, "ERROR: unknown stage '${params.stage}'. Available: anno, burden" }
+        if      (params.stage == 'anno')     { ANNO()     }
+        else if (params.stage == 'burden')   { BURDEN()   }
+        else if (params.stage == 'align')    { ALIGN()    }
+        else if (params.stage == 'coverage') { COVERAGE() }
+        else if (params.stage == 'call')     { CALL()     }
+        else { exit 1, "ERROR: unknown stage '${params.stage}'. Available: align, coverage, call, anno, burden" }
         return
     }
 

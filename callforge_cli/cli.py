@@ -131,6 +131,47 @@ def cmd_resources(rest):
 # passes everything else through to Nextflow. `required`/`optional` document the input
 # files the entry workflow consumes (kept in sync with subworkflows/entries.nf).
 STAGES = {
+    "align": {
+        "desc": "FASTQ -> analysis-ready BAM(s) (bwa-mem2 + dedup + BQSR) + alignment QC",
+        "required": [
+            "--input <CSV>             sample sheet (sample_id,fastq_1,fastq_2[,sex])",
+            "   OR --fastq_1 <R1> --fastq_2 <R2> [--sample_id <id>]   (single sample)",
+            "--genome_fasta <FASTA>    no-alt primary assembly (indices built if absent)",
+            "--target_bed <BED>        panel BED (the QC metrics feed the alignment plots)",
+        ],
+        "optional": ["--known_sites <vcf,...>   BQSR known-sites (else BQSR is skipped)"],
+        "outputs": "stage4_postalign/<sample>.analysis.bam + align_report.md "
+                   "(mapping_rate, insert_size, dup_rate plots)",
+    },
+    "coverage": {
+        "desc": "BAM(s) -> coverage/enrichment metrics + per-sample QC gate (pass/quarantine)",
+        "required": [
+            "--input_bams <glob|csv>   analysis BAM(s) (with .bai)",
+            "--genome_fasta <FASTA>    reference (HsMetrics)",
+            "--target_bed <BED>        panel BED",
+        ],
+        "optional": [
+            "--input <CSV>             sample sheet to supply sex (else inferred 'U')",
+            "thresholds: --min_mean_target_depth/--min_on_target/--max_dup_rate/…",
+        ],
+        "outputs": "stage5_qc_gate/qc_scorecard.tsv + qc_pass.txt/qc_quarantine.txt + "
+                   "coverage_report.md (on_target/coverage_uniformity/per_gene_depth/cumulative/scorecard)",
+    },
+    "call": {
+        "desc": "QC-PASS BAM(s) -> joint hard-filtered VCF (GATK, or --caller deepvariant)",
+        "required": [
+            "--input_bams <glob|csv>   QC-PASS BAM(s) with .bai (call does NOT re-run the",
+            "                          QC gate — run `callforge coverage` first and pass the pass BAMs)",
+            "--genome_fasta <FASTA>    reference",
+            "--target_bed <BED>        panel BED",
+        ],
+        "optional": [
+            "--caller deepvariant      DeepVariant + GLnexus (default: gatk)",
+            "--joint_method <m>        genomicsdb | combinegvcfs",
+        ],
+        "outputs": "stage7_filter/joint.filtered.vcf.gz + call_report.md "
+                   "(variants_per_sample, titv, het_hom, qual_dist, filter_*)",
+    },
     "anno": {
         "desc": "re-annotate a VCF (VEP + vcfanno DBs + PhyloP), e.g. after a DB update",
         "required": [
