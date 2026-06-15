@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════════════════
 #  CallForge — example parameter file (copy + edit)
-#    nextflow run main.nf -profile mac_local,conda -params-file params.yaml
+#    callforge run -profile local,conda -params-file params.yaml
 # ═══════════════════════════════════════════════════════════════════════════
 
 # ---- Inputs ----

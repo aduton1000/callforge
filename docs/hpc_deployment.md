@@ -40,7 +40,7 @@ export APPTAINER_BINDPATH=/data/refs,/data/annotation_db,$HOME/.vep
 Override per-cluster knobs on the command line or in the params file:
 
 ```bash
-nextflow run main.nf -profile hpc_slurm,apptainer -params-file params.full.yaml \
+callforge run -profile hpc_slurm,apptainer -params-file params.full.yaml \
   --slurm_partition compute --slurm_account mylab --scratch_dir /scratch/$USER
 ```
 

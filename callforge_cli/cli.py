@@ -18,11 +18,13 @@ Design notes
   Nextflow activates the correct env/container per process automatically — the user
   never activates them by hand. `callforge run` only launches Nextflow.
 
-Future enhancement (NOT built here)
------------------------------------
-Per-stage subcommands such as `callforge cnv` / `callforge anno` would map to
-Nextflow `-entry <SUBWORKFLOW>` entry points to run/resume a single stage. The
-extension point is marked `# >>> STAGE-SUBCOMMAND EXTENSION POINT <<<` in dispatch().
+Per-stage subcommands
+---------------------
+The ten per-stage subcommands (align, coverage, call, cnv, str, paralog, anno,
+cohortqc, giab, burden) run ONE analytical stage standalone. Each maps to
+`nextflow run main.nf --stage <name> …` (a `--stage` param, not `-entry`: portable
+across Nextflow versions; the strict parser disallows `-entry` for named workflows),
+reusing the SAME modules as the full pipeline. See the STAGES table below.
 """
 import argparse
 import importlib.util

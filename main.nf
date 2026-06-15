@@ -19,7 +19,7 @@ def helpMessage() {
     ║  CallForge ${workflow.manifest.version}  —  targeted-capture germline analysis  ║
     ╚══════════════════════════════════════════════════════════════════════╝
     Usage:
-      nextflow run main.nf -profile <test|mac_local|hpc_slurm>[,conda|,docker|,apptainer] \\
+      nextflow run main.nf -profile <test|local|hpc_slurm>[,conda|,docker|,apptainer] \\
         --input samplesheet.csv --genome_fasta noalt.fa \\
         --target_bed final_covered_targets.bed [--captureforge_dir <run>]
 

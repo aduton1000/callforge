@@ -215,9 +215,10 @@ The CLI is **purely additive**: the raw forms keep working unchanged
 shared conda env under `/hpc/opt/conda/envs/` plus the Lmod module/wrapper (§4.2) put
 `callforge` on `PATH` cluster-wide, so users run `callforge run …` without a manual install.
 
-> Stage-level subcommands (e.g. `callforge cnv`, `callforge anno`) are a planned
-> enhancement — they would map to Nextflow `-entry <subworkflow>` to run/resume a single
-> stage. They are **not** built yet.
+> Stage-level subcommands (e.g. `callforge cnv`, `callforge anno`) run a single stage
+> standalone — each maps to `nextflow run main.nf --stage <name> …` (a `--stage` param,
+> not `-entry`), reusing the same module as the full pipeline. See §8.10 for the full
+> stage-subcommand reference.
 
 ## 4.4 How CallForge uses conda environments
 
