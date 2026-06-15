@@ -91,11 +91,17 @@ def cmd_run(rest):
     ap.add_argument("--print-cmd", action="store_true",
                     help="print the `nextflow run …` command and exit (do not execute)")
     known, passthrough = ap.parse_known_args(rest)
+    return _launch_nextflow(known.pipeline, [], passthrough, known.print_cmd)
 
-    pipeline = _resolve_pipeline(known.pipeline)
-    cmd = ["nextflow", "run", pipeline, *passthrough]
+
+def _launch_nextflow(pipeline_override, prefix_args, passthrough, print_cmd):
+    """Build + run (or print) `nextflow run <pipeline> <prefix_args> <passthrough>`.
+    prefix_args are CLI-injected flags (e.g. --stage anno); passthrough is everything
+    the user typed (so -profile/-params-file/-resume/--<param> reach Nextflow)."""
+    pipeline = _resolve_pipeline(pipeline_override)
+    cmd = ["nextflow", "run", pipeline, *prefix_args, *passthrough]
     sys.stderr.write("[callforge] + " + " ".join(shlex.quote(c) for c in cmd) + "\n")
-    if known.print_cmd or os.environ.get("CALLFORGE_DRY_RUN"):
+    if print_cmd or os.environ.get("CALLFORGE_DRY_RUN"):
         # transparency / testability: echo without launching Nextflow
         print(" ".join(shlex.quote(c) for c in cmd))
         return 0
@@ -119,16 +125,81 @@ def cmd_resources(rest):
     return _run_bin_via_argv("discover_resources.py", rest)
 
 
+# ----------------------------------------------------------------- stage subcommands
+# Each stage runs ONE pipeline stage standalone via `nextflow run main.nf --stage <name>`,
+# reusing the SAME modules as the full pipeline. The CLI injects `--stage <name>` and
+# passes everything else through to Nextflow. `required`/`optional` document the input
+# files the entry workflow consumes (kept in sync with subworkflows/entries.nf).
+STAGES = {
+    "anno": {
+        "desc": "re-annotate a VCF (VEP + vcfanno DBs + PhyloP), e.g. after a DB update",
+        "required": [
+            "--input_vcf <VCF.gz>      paralog-flagged or filtered VCF (with .tbi)",
+            "--genome_fasta <FASTA>    no-alt primary assembly (reference)",
+            "--target_bed <BED>        panel BED (reference invariant + DB scope gate)",
+        ],
+        "optional": [
+            "--vcfanno_toml <TOML>     bring-your-own vcfanno databases",
+            "--species <name>          VEP species (default homo_sapiens)",
+            "annotation DBs are discovered from --resource_dirs / manifest",
+        ],
+        "outputs": "stage11_annotation/annotated.vcf.gz + variants.flat.tsv + anno_report.md",
+    },
+    "burden": {
+        "desc": "re-run rare-variant burden with new thresholds/engine on an annotated VCF",
+        "required": [
+            "--input_vcf <VCF.gz>      annotated VCF (with .tbi)",
+            "--input <CSV>             sample sheet with phenotype + covariate_* columns",
+            "--target_bed <BED>        panel BED (CaptureForge burden groups via metadata)",
+        ],
+        "optional": [
+            "--burden_engine <e>       collapse | regenie | skat",
+            "--burden_af_max <f>       rare-AF threshold (default 0.01)",
+            "--burden_csq <list>       qualifying consequences",
+            "--cohort_qc_json <JSON>   ancestry PCs (else none; PC-stability gate applies)",
+        ],
+        "outputs": "stage14_burden/burden_results.tsv + burden_report.md",
+    },
+}
+
+
+def _stage_help(stage):
+    s = STAGES[stage]
+    lines = [f"callforge {stage} — {s['desc']}", "",
+             f"usage: callforge {stage} [--print-cmd] [--pipeline PATH] <inputs> "
+             f"[-profile …] [-params-file …] [-resume]", "",
+             "Runs `nextflow run main.nf --stage %s …`, reusing the same module as the "
+             "full pipeline." % stage, "",
+             "required input files:"]
+    lines += [f"  {r}" for r in s["required"]]
+    lines += ["", "optional:"]
+    lines += [f"  {o}" for o in s["optional"]]
+    lines += ["", f"key outputs: {s['outputs']}",
+              "", "Any other flag is passed straight to Nextflow."]
+    return "\n".join(lines)
+
+
+def cmd_stage(stage, rest):
+    if any(h in rest for h in ("-h", "--help")):
+        print(_stage_help(stage))
+        return 0
+    ap = argparse.ArgumentParser(prog=f"callforge {stage}", allow_abbrev=False, add_help=False)
+    ap.add_argument("--pipeline", metavar="PATH|owner/repo")
+    ap.add_argument("--print-cmd", action="store_true")
+    known, passthrough = ap.parse_known_args(rest)
+    return _launch_nextflow(known.pipeline, ["--stage", stage], passthrough, known.print_cmd)
+
+
 # ----------------------------------------------------------------- dispatch
 SUBCOMMANDS = {
     "run": (cmd_run, "run the full CallForge pipeline (wrapper over `nextflow run`)"),
     "samplesheet": (cmd_samplesheet, "scaffold/assemble a sample sheet (modes A/B/C)"),
     "resources": (cmd_resources, "resource discovery / genomic-scope checks"),
-    # >>> STAGE-SUBCOMMAND EXTENSION POINT <<<
-    # Future: per-stage subcommands (e.g. "cnv", "anno") dispatching to
-    #   callforge run --pipeline <main.nf> -entry <SUBWORKFLOW> …
-    # to run/resume a single stage. Not built yet — see module docstring.
 }
+# stage subcommands (run one stage standalone, reusing the pipeline's modules)
+for _st in STAGES:
+    SUBCOMMANDS[_st] = ((lambda s: (lambda rest: cmd_stage(s, rest)))(_st),
+                        "stage: " + STAGES[_st]["desc"])
 
 
 def _top_help():
