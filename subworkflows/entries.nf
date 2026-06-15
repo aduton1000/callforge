@@ -1,6 +1,6 @@
 // ── subworkflows/entries.nf  (CallForge stage-subcommand entry workflows) ────────
 // Named entry workflows so a user can run ONE analytical stage standalone via
-//   nextflow run main.nf -entry <stage> --<inputs…>   (or `callforge <stage> …`)
+//   nextflow run main.nf --stage <stage> --<inputs…>   (or `callforge <stage> …`)
 // on externally-provided inputs (the files that normally arrive from an upstream
 // stage) instead of re-running the whole pipeline.
 //

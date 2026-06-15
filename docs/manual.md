@@ -18,10 +18,10 @@ The pipeline runs each stage in its own pinned conda env or container (`env/*.ym
 | profile | use |
 |---|---|
 | `test` | 3–4 synthetic samples, subset reference; minutes. Add `,docker` for VEP/hap.py. |
-| `mac_local` | full pipeline on one macOS machine (heavy steps slow). |
+| `local` | full pipeline on one machine (any Linux/macOS; `mac_local` is a deprecated alias). |
 | `hpc_slurm` | SLURM + Apptainer / shared conda; the production cohort run. |
 
-Compose an engine: `-profile test,docker`, `mac_local,conda`, `hpc_slurm,apptainer`.
+Compose an engine: `-profile test,docker`, `local,conda`, `hpc_slurm,apptainer`.
 
 ## 3. Inputs (see `params.example.yaml`)
 - `--input` sample sheet CSV: `sample_id,fastq_1,fastq_2,sex?,phenotype?,covariate_*?,batch?`.
@@ -32,9 +32,9 @@ Compose an engine: `-profile test,docker`, `mac_local,conda`, `hpc_slurm,apptain
 
 ## 4. Run
 ```bash
-bash test/make_test_data.sh && nextflow run main.nf -profile test,docker          # sanity
-nextflow run main.nf -profile mac_local,conda     -params-file params.full.yaml    # full (Mac)
-nextflow run main.nf -profile hpc_slurm,apptainer -params-file params.full.yaml    # full (HPC)
+bash test/make_test_data.sh && callforge run -profile test,docker                  # sanity
+callforge run -profile local,conda     -params-file params.full.yaml               # full (one machine)
+callforge run -profile hpc_slurm,apptainer -params-file params.full.yaml           # full (HPC)
 ```
 
 ## 5. Outputs (`results/`)
