@@ -172,6 +172,44 @@ STAGES = {
         "outputs": "stage7_filter/joint.filtered.vcf.gz + call_report.md "
                    "(variants_per_sample, titv, het_hom, qual_dist, filter_*)",
     },
+    "cnv": {
+        "desc": "BAM(s) -> CNVkit calls, labelled by CaptureForge callability",
+        "required": [
+            "--input_bams <glob|csv>   BAM(s) with .bai (PoN pooled from these)",
+            "--genome_fasta <FASTA>    reference",
+            "--target_bed <BED>        panel BED",
+        ],
+        "optional": [
+            "CaptureForge callability via --cf_metrics_json / --captureforge_dir",
+            "--cnv_method / --cnv_segment_method   (only --cnv_caller cnvkit is implemented)",
+        ],
+        "outputs": "stage8_cnv/cnv_calls.tsv (each call stamped callable | "
+                   "breakpoint_blind_low_confidence) + cnv_report.md",
+    },
+    "str": {
+        "desc": "BAM(s) -> ExpansionHunter genotypes on the CaptureForge STR catalog",
+        "required": [
+            "--input_bams <glob|csv>   BAM(s) with .bai",
+            "--genome_fasta <FASTA>    reference",
+            "--target_bed <BED>        panel BED",
+        ],
+        "optional": [
+            "--str_catalog <JSON>      CaptureForge STR catalog (else built from the",
+            "                          CaptureForge STR loci in gene_metadata)",
+        ],
+        "outputs": "stage9_str/str_calls.tsv + str_report.md "
+                   "(str_allele_sizes, str_call_rate, str_read_support)",
+    },
+    "paralog": {
+        "desc": "VCF -> paralog-aware flagging (INFO/PARALOG_GENE, PARALOG_CONF)",
+        "required": [
+            "--input_vcf <VCF.gz>      callset VCF (with .tbi); uses its own MQ, not BAMs",
+            "--target_bed <BED>        panel BED (CaptureForge paralog regions via metadata)",
+        ],
+        "optional": ["--paralog_min_mq <int>    MQ below which a paralog-region call is flagged"],
+        "outputs": "stage10_paralog/paralog.annotated.vcf.gz (INFO/PARALOG_GENE + "
+                   "PARALOG_CONF) + paralog_report.md",
+    },
     "anno": {
         "desc": "re-annotate a VCF (VEP + vcfanno DBs + PhyloP), e.g. after a DB update",
         "required": [

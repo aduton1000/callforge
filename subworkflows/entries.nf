@@ -19,6 +19,8 @@ include { FASTQC_RAW; FASTP; BWAMEM2_INDEX; BWAMEM2_ALIGN; MARKDUP; BQSR;
 include { HAPLOTYPECALLER; GENOMICSDB_IMPORT; GENOTYPE_GVCFS_DB; COMBINE_GENOTYPE;
           HARD_FILTER; CALLSET_STATS; FILTER_SUMMARY; PLOT_CALLING_QC; PLOT_FILTER_QC;
           DEEPVARIANT; GLNEXUS } from '../modules/stage6_7_calling.nf'
+include { CNVKIT_BATCH; CNV_ANNOTATE; PLOT_CNV; BUILD_STR_CATALOG; EXPANSIONHUNTER;
+          STR_SUMMARIZE; PLOT_STR; PARALOG_FLAG; PLOT_PARALOG } from '../modules/stage8_10_cnv_str_paralog.nf'
 include { VEP; ANNOTATE_DBS; VERIFY_ANNOTATION; FLATTEN_TSV;
           PLOT_ANNOTATION } from '../modules/stage11_annotate.nf'
 include { BURDEN_MATRIX; BURDEN_COLLAPSE; BURDEN_REGENIE; BURDEN_SKAT;
@@ -36,6 +38,12 @@ def bamChannel(spec) {
                                 : Channel.fromPath(spec, checkIfExists: true)
     return ch.map { bam -> tuple(bam.name.split('\\.')[0], bam, file("${bam}.bai", checkIfExists: true)) }
 }
+
+// helpers: CaptureForge metrics/baits (explicit path, else the NO_* placeholder). Feeding
+// these to INGEST_CAPTUREFORGE reproduces the same gene_metadata (incl. cnv_callable +
+// paralog flags + burden groups) the pipeline builds — so labels propagate identically.
+def cfMetricsFile() { params.cf_metrics_json ? file(params.cf_metrics_json) : file("${projectDir}/assets/NO_METRICS") }
+def cfBaitsFile()   { params.cf_baits_csv    ? file(params.cf_baits_csv)    : file("${projectDir}/assets/NO_BAITS") }
 
 // ── anno : re-annotate a VCF (VEP + vcfanno DBs + PhyloP), e.g. after a DB update ──
 workflow ANNO {
@@ -244,8 +252,13 @@ workflow COVERAGE {
     def ch_png = PLOT_COVERAGE.out.png.mix(PLOT_QC_GATE.out.png).collect()
     def ch_cap = PLOT_COVERAGE.out.captions.mix(PLOT_QC_GATE.out.captions).collect()
     def ch_sum = QC_GATE.out.scorecard.mix(QC_GATE.out.summary).collect()
+    // dup_rate caveat: its meaning depends on the supplied BAM (see Gate 2 review).
+    def cov_note = synth + ' --input-note ' +
+        '"dup_rate reflects duplicates in the SUPPLIED BAM: ~0 if the BAM was already ' +
+        'deduplicated upstream (NOT low library duplication), vs true library duplication ' +
+        'for a freshly-aligned pre-dedup BAM."'
     STAGE_REPORT( Channel.value('coverage'), Channel.value('Coverage & QC gate (Stages 4-5)'),
-                  Channel.value('stage5_qc_gate'), ch_png, ch_cap, ch_sum, Channel.value(synth) )
+                  Channel.value('stage5_qc_gate'), ch_png, ch_cap, ch_sum, Channel.value(cov_note) )
     STAGE_PROVENANCE( Channel.value('coverage'), Channel.value('stage5_qc_gate'),
         Channel.value("--input bams=${params.input_bams} --input reference=${params.genome_fasta} " +
                       "--input target_bed=${params.target_bed} " +
@@ -309,4 +322,112 @@ workflow CALL {
         Channel.value("--input bams=${params.input_bams} --input reference=${params.genome_fasta} " +
                       "--input target_bed=${params.target_bed} --param caller=${params.caller} " +
                       "--param joint_method=${params.joint_method} --tool gatk --tool bcftools") )
+}
+
+// ── cnv : BAM(s) -> CNVkit calls, CaptureForge-callability-LABELLED ────────────
+// per-sample (PoN pooled from the inputs). The CaptureForge callability label is
+// propagated by CNV_ANNOTATE: a CR1/CFH (breakpoint-blind) call is stamped
+// 'breakpoint_blind_low_confidence' on standalone output, exactly as in-pipeline.
+workflow CNV {
+    main:
+    need(params.input_bams,   "callforge cnv needs --input_bams <glob/comma list of BAM(s)>")
+    need(params.genome_fasta, "callforge cnv needs --genome_fasta <reference>")
+    need(params.target_bed,   "callforge cnv needs --target_bed <panel BED>")
+    if (params.cnv_caller != 'cnvkit')
+        log.warn "cnv_caller='${params.cnv_caller}': only 'cnvkit' is implemented (same as the pipeline); using CNVkit."
+    ch_bams   = bamChannel(params.input_bams)
+    ch_genome = file(params.genome_fasta, checkIfExists: true)
+    ch_bed    = file(params.target_bed,   checkIfExists: true)
+    def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
+
+    PREPARE_REFERENCE( ch_genome )
+    REFERENCE_INVARIANT( PREPARE_REFERENCE.out.fai, ch_bed )
+    INGEST_CAPTUREFORGE( ch_bed, cfMetricsFile(), cfBaitsFile() )    // CaptureForge callability
+    ch_gene_meta = INGEST_CAPTUREFORGE.out.tsv
+    ch_v = VALIDATE_BAM( Channel.value('cnv'), ch_bams, PREPARE_REFERENCE.out.fai ).bam
+
+    CNVKIT_BATCH( ch_v.map { s, b, i -> b }.collect(), ch_v.map { s, b, i -> i }.collect(),
+                  ch_bed, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai )
+    CNV_ANNOTATE( CNVKIT_BATCH.out.cns, CNVKIT_BATCH.out.cnr, ch_bed, ch_gene_meta )
+    PLOT_CNV( CNV_ANNOTATE.out.copyratio, CNV_ANNOTATE.out.summary, ch_gene_meta )
+
+    def ch_sum = CNV_ANNOTATE.out.calls.mix(CNV_ANNOTATE.out.summary).collect()
+    STAGE_REPORT( Channel.value('cnv'), Channel.value('CNV (Stage 8)'), Channel.value('stage8_cnv'),
+                  PLOT_CNV.out.png.collect(), PLOT_CNV.out.captions.collect(), ch_sum, Channel.value(synth) )
+    STAGE_PROVENANCE( Channel.value('cnv'), Channel.value('stage8_cnv'),
+        Channel.value("--input bams=${params.input_bams} --input reference=${params.genome_fasta} " +
+                      "--input target_bed=${params.target_bed} --param cnv_caller=${params.cnv_caller} " +
+                      "--param cnv_method=${params.cnv_method} --param cnv_segment_method=${params.cnv_segment_method} " +
+                      "--tool cnvkit.py --tool samtools") )
+}
+
+// ── str : BAM(s) -> ExpansionHunter genotypes on the CaptureForge STR catalog ──
+// per-sample. Uses the supplied --str_catalog (the CaptureForge catalog) if given,
+// else builds one from the CaptureForge STR loci in gene_metadata — same as pipeline.
+workflow STR {
+    main:
+    need(params.input_bams,   "callforge str needs --input_bams <glob/comma list of BAM(s)>")
+    need(params.genome_fasta, "callforge str needs --genome_fasta <reference>")
+    need(params.target_bed,   "callforge str needs --target_bed <panel BED>")
+    ch_bams   = bamChannel(params.input_bams)
+    ch_genome = file(params.genome_fasta, checkIfExists: true)
+    ch_bed    = file(params.target_bed,   checkIfExists: true)
+    def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
+
+    PREPARE_REFERENCE( ch_genome )
+    REFERENCE_INVARIANT( PREPARE_REFERENCE.out.fai, ch_bed )
+    INGEST_CAPTUREFORGE( ch_bed, cfMetricsFile(), cfBaitsFile() )
+    ch_v = VALIDATE_BAM( Channel.value('str'), ch_bams, PREPARE_REFERENCE.out.fai ).bam
+
+    def ch_catalog
+    if (params.str_catalog) {
+        ch_catalog = Channel.value(file(params.str_catalog, checkIfExists: true))   // CaptureForge catalog
+    } else {
+        BUILD_STR_CATALOG( INGEST_CAPTUREFORGE.out.tsv )                            // from CaptureForge STR loci
+        ch_catalog = BUILD_STR_CATALOG.out.catalog
+    }
+    EXPANSIONHUNTER( ch_v, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai, ch_catalog )
+    STR_SUMMARIZE( EXPANSIONHUNTER.out.json.collect() )
+    PLOT_STR( STR_SUMMARIZE.out.calls, STR_SUMMARIZE.out.summary )
+
+    def ch_sum = STR_SUMMARIZE.out.calls.mix(STR_SUMMARIZE.out.summary).collect()
+    STAGE_REPORT( Channel.value('str'), Channel.value('STR genotyping (Stage 9)'), Channel.value('stage9_str'),
+                  PLOT_STR.out.png.collect(), PLOT_STR.out.captions.collect(), ch_sum, Channel.value(synth) )
+    STAGE_PROVENANCE( Channel.value('str'), Channel.value('stage9_str'),
+        Channel.value("--input bams=${params.input_bams} --input reference=${params.genome_fasta} " +
+                      "--input str_catalog=${params.str_catalog ?: 'built-from-CaptureForge-STR-loci'} " +
+                      "--tool ExpansionHunter") )
+}
+
+// ── paralog : VCF -> paralog-aware flagging (INFO/PARALOG_GENE, PARALOG_CONF) ───
+// joint VCF. The real PARALOG_FLAG module uses the VCF's own MQ (not BAMs) over the
+// CaptureForge paralog regions, writing PARALOG_GENE/PARALOG_CONF back into the VCF.
+workflow PARALOG {
+    main:
+    need(params.input_vcf,    "callforge paralog needs --input_vcf <VCF.gz> (e.g. the filtered callset)")
+    need(params.target_bed,   "callforge paralog needs --target_bed <panel BED>")
+    need(file(params.input_vcf).exists(),          "--input_vcf not found: ${params.input_vcf}")
+    need(file(params.input_vcf + '.tbi').exists(), "VCF index missing: ${params.input_vcf}.tbi (run `tabix -p vcf`)")
+    ch_vcf = Channel.value( tuple(file(params.input_vcf), file(params.input_vcf + '.tbi')) )
+    ch_bed = file(params.target_bed, checkIfExists: true)
+    // distinct NO_* placeholders for the (unused) fai + sheet slots to avoid a
+    // same-name input collision; both are recognised as "absent" by VALIDATE_STAGE_INPUTS.
+    def no_fai   = file("${projectDir}/assets/NO_CACHE")
+    def no_sheet = file("${projectDir}/assets/NO_BAITS")
+    def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
+
+    INGEST_CAPTUREFORGE( ch_bed, cfMetricsFile(), cfBaitsFile() )    // CaptureForge paralog regions
+    VALIDATE_STAGE_INPUTS( Channel.value('paralog'), ch_vcf, Channel.value(no_fai),
+                           Channel.value(no_sheet), Channel.value('') )
+    PARALOG_FLAG( VALIDATE_STAGE_INPUTS.out.vcf, ch_bed, INGEST_CAPTUREFORGE.out.tsv )
+    PLOT_PARALOG( PARALOG_FLAG.out.summary )
+
+    def ch_sum = PARALOG_FLAG.out.summary.mix(PARALOG_FLAG.out.variants).collect()
+    STAGE_REPORT( Channel.value('paralog'), Channel.value('Paralog-aware flagging (Stage 10)'),
+                  Channel.value('stage10_paralog'),
+                  PLOT_PARALOG.out.png.collect(), PLOT_PARALOG.out.captions.collect(),
+                  ch_sum, Channel.value(synth) )
+    STAGE_PROVENANCE( Channel.value('paralog'), Channel.value('stage10_paralog'),
+        Channel.value("--input vcf=${params.input_vcf} --input target_bed=${params.target_bed} " +
+                      "--param paralog_min_mq=${params.paralog_min_mq} --tool bcftools") )
 }
