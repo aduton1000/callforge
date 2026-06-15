@@ -63,6 +63,10 @@ test/data/
 
 # Local-only / private inputs
 _local/
+# Per-user working config (contains real machine-specific paths); params.example.yaml
+# is the public template. Never track the filled-in copy.
+params.full.yaml
+params.yaml
 
 # Conda / container build artifacts
 *.sif
