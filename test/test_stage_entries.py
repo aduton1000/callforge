@@ -175,6 +175,32 @@ class CliStages(unittest.TestCase):
         self.assertIn("--outdir /tmp/myrun", r.stdout)
         self.assertNotIn("results/standalone", r.stdout)
 
+    def test_all_stage_subcommands_listed(self):
+        r = self.cli("--help")
+        for st in ("align", "coverage", "call", "anno", "burden"):
+            self.assertIn(st, r.stdout)
+
+    def test_call_help_states_passbam_semantics(self):
+        r = self.cli("call", "--help")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("QC-PASS", r.stdout)
+        self.assertIn("does NOT re-run", r.stdout)
+        self.assertIn("--input_bams", r.stdout)
+
+    def test_align_help_lists_fastq_or_sheet(self):
+        r = self.cli("align", "--help")
+        self.assertEqual(r.returncode, 0)
+        for tok in ("--input", "--fastq_1", "--genome_fasta", "--target_bed"):
+            self.assertIn(tok, r.stdout)
+
+    def test_coverage_constructs_stage_command(self):
+        r = self.cli("coverage", "--print-cmd", "--input_bams", "out/*.bam",
+                     "--genome_fasta", "ref.fa", "--target_bed", "t.bed")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--stage coverage", r.stdout)
+        self.assertIn("--input_bams", r.stdout)
+        self.assertIn("out/*.bam", r.stdout)   # shlex-quoted because of the glob
+
 
 # ───────────────────────── layer 2: Nextflow (auto-skip) ─────────────────────────
 @unittest.skipUnless(_nextflow(), "no nextflow binary (set CALLFORGE_NEXTFLOW or PATH)")
@@ -210,6 +236,27 @@ class NextflowEntries(unittest.TestCase):
                           "--input", self.sheet, "--target_bed", self.bed)
         self.assertNotIn("SUCCESS", r.stdout + r.stderr)
         self.assertIn("must not overwrite", r.stdout + r.stderr)
+
+    def test_align_entry_previews(self):
+        r = self._preview("--stage", "align", "--input", self.sheet,
+                          "--genome_fasta", self.genome, "--target_bed", self.bed,
+                          "--outdir", "results/standalone/_preview")
+        self.assertIn("SUCCESS", r.stdout + r.stderr, r.stderr)
+
+    def test_coverage_and_call_entries_preview(self):
+        # preview only builds channels (no heavy tools needed); dummy BAM+bai satisfy
+        # the input-existence checks. Covers gatk + deepvariant calling paths.
+        with tempfile.TemporaryDirectory() as d:
+            for s in ("S1", "S2"):
+                Path(os.path.join(d, f"{s}.analysis.bam")).write_bytes(b"")
+                Path(os.path.join(d, f"{s}.analysis.bam.bai")).write_bytes(b"")
+            glob = os.path.join(d, "*.analysis.bam")
+            for extra in (["--stage", "coverage"],
+                          ["--stage", "call"],
+                          ["--stage", "call", "--caller", "deepvariant"]):
+                r = self._preview(*extra, "--input_bams", glob, "--genome_fasta", self.genome,
+                                  "--target_bed", self.bed, "--outdir", "results/standalone/_preview")
+                self.assertIn("SUCCESS", r.stdout + r.stderr, f"{extra}\n{r.stderr[-1500:]}")
 
     def test_burden_entry_runs_and_fails_loud(self):
         if not os.path.exists(self.burden_vcf):

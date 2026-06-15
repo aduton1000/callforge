@@ -28,6 +28,46 @@ process VALIDATE_STAGE_INPUTS {
     """
 }
 
+process VALIDATE_BAM {
+    // per-sample fail-loud check: index present + @SQ contigs agree with the reference
+    // (build/contig). Passes the tuple through to gate the downstream caller/QC module.
+    tag   "${stage}:${sample_id}"
+    label 'small'
+    conda "${projectDir}/env/callforge.yml"
+
+    input:
+    val  stage
+    tuple val(sample_id), path(bam), path(bai)
+    path fai
+
+    output:
+    tuple val(sample_id), path(bam), path(bai), emit: bam
+
+    script:
+    """
+    validate_stage_inputs.py --stage ${stage} --bam ${bam} --fai ${fai}
+    """
+}
+
+process STAGE_PUBLISH {
+    // thin publisher for a stage output the underlying module does not publishDir
+    // (e.g. the analysis BAM): stages the files in and republishes them unchanged.
+    tag   "${pubdir}"
+    label 'small'
+    conda "${projectDir}/env/callforge.yml"
+    publishDir { "${params.outdir}/${pubdir}" }, mode: params.publish_mode
+
+    input:
+    val  pubdir
+    path f
+
+    output:
+    path "*", includeInputs: true
+
+    script:
+    "true"
+}
+
 process STAGE_REPORT {
     tag   "${stage}"
     label 'small'
