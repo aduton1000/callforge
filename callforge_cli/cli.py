@@ -224,6 +224,32 @@ STAGES = {
         ],
         "outputs": "stage11_annotation/annotated.vcf.gz + variants.flat.tsv + anno_report.md",
     },
+    "cohortqc": {
+        "desc": "somalier relatedness/sex (off-target X/Y backstop) + ancestry PCA + missingness",
+        "required": [
+            "--input_bams <glob|csv>   BAM(s) with .bai (somalier extract / sex)",
+            "--input_vcf <VCF.gz>      joint VCF (missingness + ancestry PCA)",
+            "--genome_fasta <FASTA>    reference",
+            "--somalier_sites <VCF.gz> somalier sites (+ .tbi)",
+            "--input <CSV>             sample sheet (declared sex)",
+        ],
+        "optional": ["(ancestry PCs feed `callforge burden --cohort_qc_json cohort_qc.json`)"],
+        "outputs": "stage12_cohortqc/cohort_qc.json + cohortqc_report.md "
+                   "(relatedness_heatmap, ancestry_pca, cohort_sex_check, missingness)",
+    },
+    "giab": {
+        "desc": "hap.py precision/recall/F1 vs GIAB truth, restricted to the panel BED (on-target)",
+        "required": [
+            "--input_vcf <VCF.gz>      joint callset VCF (with .tbi)",
+            "--giab_control_id <id>    control sample_id in the VCF to benchmark",
+            "--giab_truth_vcf <VCF.gz> GIAB truth (+ .tbi); --giab_truth_bed <BED>",
+            "--target_bed <BED>        panel BED (on-target restriction, hap.py -T)",
+            "--genome_fasta <FASTA>    reference",
+        ],
+        "optional": ["(on-target restriction is recorded in happy.runinfo.json)"],
+        "outputs": "stage13_giab/happy.summary.csv + happy.runinfo.json + giab_report.md "
+                   "(giab_precision_recall, giab_f1)",
+    },
     "burden": {
         "desc": "re-run rare-variant burden with new thresholds/engine on an annotated VCF",
         "required": [

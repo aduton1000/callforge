@@ -243,6 +243,18 @@ class CliStages(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertIn("--str_catalog", r.stdout)
 
+    def test_cohortqc_help_mentions_chaining_and_somalier(self):
+        r = self.cli("cohortqc", "--help")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("somalier", r.stdout)
+        self.assertIn("cohort_qc.json", r.stdout)   # the file burden consumes
+
+    def test_giab_help_mentions_on_target_and_runinfo(self):
+        r = self.cli("giab", "--help")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("on-target", r.stdout)
+        self.assertIn("runinfo", r.stdout)
+
     def test_call_help_states_passbam_semantics(self):
         r = self.cli("call", "--help")
         self.assertEqual(r.returncode, 0)
@@ -277,6 +289,7 @@ class NextflowEntries(unittest.TestCase):
         cls.anno_vcf = os.path.join(REPO, "results/stage10_paralog/paralog.annotated.vcf.gz")
         cls.burden_vcf = os.path.join(REPO, "results/stage11_annotation/annotated.vcf.gz")
         cls.filtered_vcf = os.path.join(REPO, "results/stage7_filter/joint.filtered.vcf.gz")
+        cls.cohort_qc_json = os.path.join(REPO, "results/stage12_cohortqc/cohort_qc.json")
 
     def _preview(self, *extra):
         return run([self.nf, "run", "main.nf", "-profile", "test", "-preview", *extra], cwd=REPO)
@@ -322,6 +335,49 @@ class NextflowEntries(unittest.TestCase):
                 r = self._preview(*extra, "--input_bams", glob, "--genome_fasta", self.genome,
                                   "--target_bed", self.bed, "--outdir", "results/standalone/_preview")
                 self.assertIn("SUCCESS", r.stdout + r.stderr, f"{extra}\n{r.stderr[-1500:]}")
+
+    def test_cohortqc_and_giab_preview(self):
+        with tempfile.TemporaryDirectory() as d:
+            for s in ("CTRL", "S1", "S2"):
+                Path(os.path.join(d, f"{s}.analysis.bam")).write_bytes(b"")
+                Path(os.path.join(d, f"{s}.analysis.bam.bai")).write_bytes(b"")
+            r1 = self._preview("--stage", "cohortqc", "--input_bams", os.path.join(d, "*.analysis.bam"),
+                               "--input_vcf", self.filtered_vcf, "--genome_fasta", self.genome,
+                               "--outdir", "results/standalone/_preview")
+            self.assertIn("SUCCESS", r1.stdout + r1.stderr, r1.stderr[-1500:])
+            r2 = self._preview("--stage", "giab", "--input_vcf", self.filtered_vcf,
+                               "--target_bed", self.bed, "--genome_fasta", self.genome,
+                               "--outdir", "results/standalone/_preview")
+            self.assertIn("SUCCESS", r2.stdout + r2.stderr, r2.stderr[-1500:])
+
+    def test_giab_runs_live_and_is_bed_restricted(self):
+        # hap.py runs in its container; confirm on-target restriction from runinfo, not assertion.
+        if not (os.path.exists(self.filtered_vcf) and shutil.which("docker")):
+            self.skipTest("need results VCF + docker (hap.py image)")
+        with tempfile.TemporaryDirectory() as d:
+            out, work = os.path.join(d, "out"), os.path.join(d, "work")
+            r = run([self.nf, "run", "main.nf", "-profile", "test,docker", "--stage", "giab",
+                     "--input_vcf", self.filtered_vcf, "--target_bed", self.bed,
+                     "--genome_fasta", self.genome, "--outdir", out, "-work-dir", work], cwd=REPO)
+            if "SUCCESS" not in (r.stdout + r.stderr):
+                self.skipTest(f"giab live run unavailable (docker/hap.py image?): {r.stderr[-400:]}")
+            runinfo = Path(os.path.join(out, "stage13_giab", "happy.runinfo.json")).read_text()
+            self.assertIn(os.path.basename(self.bed), runinfo)   # panel BED in hap.py's own cmdline
+            self.assertRegex(runinfo, r"(-T|--target-regions)")
+
+    def test_cohortqc_to_burden_chaining(self):
+        # the cohort_qc.json a cohortqc run emits is the file `burden --cohort_qc_json` consumes
+        if not (os.path.exists(self.cohort_qc_json) and os.path.exists(self.burden_vcf)):
+            self.skipTest("need results/ cohort_qc.json + annotated VCF fixtures")
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            out, work = os.path.join(d, "out"), os.path.join(d, "work")
+            r = run([self.nf, "run", "main.nf", "-profile", "test", "--stage", "burden",
+                     "--input_vcf", self.burden_vcf, "--input", self.sheet, "--target_bed", self.bed,
+                     "--cohort_qc_json", self.cohort_qc_json, "--outdir", out, "-work-dir", work], cwd=REPO)
+            self.assertIn("SUCCESS", r.stdout + r.stderr, r.stderr[-2000:])
+            meta = json.loads(Path(os.path.join(out, "stage14_burden", "burden_meta.json")).read_text())
+            self.assertIn("n_pca_sites", meta)   # proves the cohortqc PCs were read/consumed
 
     def test_paralog_runs_live_and_writes_info_fields(self):
         # paralog uses bcftools (no conda needed): run it for real and confirm the

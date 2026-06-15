@@ -23,6 +23,8 @@ include { CNVKIT_BATCH; CNV_ANNOTATE; PLOT_CNV; BUILD_STR_CATALOG; EXPANSIONHUNT
           STR_SUMMARIZE; PLOT_STR; PARALOG_FLAG; PLOT_PARALOG } from '../modules/stage8_10_cnv_str_paralog.nf'
 include { VEP; ANNOTATE_DBS; VERIFY_ANNOTATION; FLATTEN_TSV;
           PLOT_ANNOTATION } from '../modules/stage11_annotate.nf'
+include { SOMALIER_EXTRACT; SOMALIER_RELATE; COHORT_QC; EXTRACT_CONTROL;
+          GIAB_HAPPY; PLOT_GIAB } from '../modules/stage12_13_cohortqc_giab.nf'
 include { BURDEN_MATRIX; BURDEN_COLLAPSE; BURDEN_REGENIE; BURDEN_SKAT;
           PLOT_BURDEN } from '../modules/stage14_burden.nf'
 include { VALIDATE_STAGE_INPUTS; VALIDATE_BAM; STAGE_PUBLISH;
@@ -430,4 +432,90 @@ workflow PARALOG {
     STAGE_PROVENANCE( Channel.value('paralog'), Channel.value('stage10_paralog'),
         Channel.value("--input vcf=${params.input_vcf} --input target_bed=${params.target_bed} " +
                       "--param paralog_min_mq=${params.paralog_min_mq} --tool bcftools") )
+}
+
+// ── cohortqc : BAM(s) + joint VCF -> somalier relatedness/sex + ancestry PCA + missingness ──
+// The ancestry-PC output (cohort_qc.json) is the SAME file `callforge burden --cohort_qc_json`
+// consumes, so cohortqc -> burden chains. somalier infers sex from off-target X/Y signal
+// (the autosomal-panel backstop). NB: real PC stability is a real-data question — on a tiny
+// synthetic cohort the burden PC-stability gate will (correctly) drop the PCs.
+workflow COHORTQC {
+    main:
+    need(params.input_bams,    "callforge cohortqc needs --input_bams <glob/comma list of BAM(s)> (somalier/sex)")
+    need(params.input_vcf,     "callforge cohortqc needs --input_vcf <joint VCF.gz> (missingness/ancestry)")
+    need(params.genome_fasta,  "callforge cohortqc needs --genome_fasta <reference>")
+    need(params.somalier_sites,"callforge cohortqc needs --somalier_sites <sites VCF.gz> (+ .tbi)")
+    need(params.input,         "callforge cohortqc needs --input <sample sheet> (declared sex)")
+    need(file(params.input_vcf).exists(),          "--input_vcf not found: ${params.input_vcf}")
+    need(file(params.input_vcf + '.tbi').exists(), "VCF index missing: ${params.input_vcf}.tbi (run `tabix -p vcf`)")
+    ch_bams   = bamChannel(params.input_bams)
+    ch_vcf    = Channel.value( tuple(file(params.input_vcf), file(params.input_vcf + '.tbi')) )
+    ch_genome = file(params.genome_fasta, checkIfExists: true)
+    ch_sheet  = file(params.input,         checkIfExists: true)
+    def noref = file("${projectDir}/assets/NO_CACHE")
+    def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
+
+    PREPARE_REFERENCE( ch_genome )
+    VALIDATE_SAMPLESHEET( ch_sheet )
+    ch_v = VALIDATE_BAM( Channel.value('cohortqc'), ch_bams, PREPARE_REFERENCE.out.fai ).bam
+    VALIDATE_STAGE_INPUTS( Channel.value('cohortqc'), ch_vcf, PREPARE_REFERENCE.out.fai,
+                           Channel.value(noref), Channel.value('') )
+
+    SOMALIER_EXTRACT( ch_v, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai,
+                      Channel.value(file(params.somalier_sites)),
+                      Channel.value(file(params.somalier_sites + '.tbi')) )
+    SOMALIER_RELATE( SOMALIER_EXTRACT.out.somalier.collect() )
+    COHORT_QC( VALIDATE_STAGE_INPUTS.out.vcf, SOMALIER_RELATE.out.samples,
+               SOMALIER_RELATE.out.pairs, VALIDATE_SAMPLESHEET.out.csv )
+
+    STAGE_REPORT( Channel.value('cohortqc'), Channel.value('Cohort QC (Stage 12)'),
+                  Channel.value('stage12_cohortqc'),
+                  COHORT_QC.out.png.collect(), COHORT_QC.out.captions.collect(),
+                  COHORT_QC.out.json.collect(), Channel.value(synth) )
+    STAGE_PROVENANCE( Channel.value('cohortqc'), Channel.value('stage12_cohortqc'),
+        Channel.value("--input bams=${params.input_bams} --input vcf=${params.input_vcf} " +
+                      "--input somalier_sites=${params.somalier_sites} --input samplesheet=${params.input} " +
+                      "--tool somalier --tool bcftools") )
+}
+
+// ── giab : query VCF vs GIAB truth, hap.py restricted to the panel BED (on-target) ──
+// EXTRACT_CONTROL pulls --giab_control_id from the callset; hap.py runs with -T <panel BED>
+// so off-target truth can't distort sensitivity (the -T is recorded in happy.runinfo.json).
+workflow GIAB {
+    main:
+    need(params.input_vcf,      "callforge giab needs --input_vcf <joint callset VCF.gz> (with .tbi)")
+    need(params.giab_control_id,"callforge giab needs --giab_control_id <sample_id in the VCF>")
+    need(params.giab_truth_vcf, "callforge giab needs --giab_truth_vcf <GIAB truth VCF.gz> (+ .tbi)")
+    need(params.giab_truth_bed, "callforge giab needs --giab_truth_bed <GIAB high-confidence BED>")
+    need(params.target_bed,     "callforge giab needs --target_bed <panel BED> (on-target restriction)")
+    need(params.genome_fasta,   "callforge giab needs --genome_fasta <reference>")
+    need(file(params.input_vcf).exists(),          "--input_vcf not found: ${params.input_vcf}")
+    need(file(params.input_vcf + '.tbi').exists(), "VCF index missing: ${params.input_vcf}.tbi (run `tabix -p vcf`)")
+    ch_vcf    = Channel.value( tuple(file(params.input_vcf), file(params.input_vcf + '.tbi')) )
+    ch_genome = file(params.genome_fasta, checkIfExists: true)
+    ch_bed    = file(params.target_bed,   checkIfExists: true)
+    def noref = file("${projectDir}/assets/NO_CACHE")
+    def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
+
+    PREPARE_REFERENCE( ch_genome )
+    REFERENCE_INVARIANT( PREPARE_REFERENCE.out.fai, ch_bed )
+    VALIDATE_STAGE_INPUTS( Channel.value('giab'), ch_vcf, PREPARE_REFERENCE.out.fai,
+                           Channel.value(noref), Channel.value('') )
+    EXTRACT_CONTROL( VALIDATE_STAGE_INPUTS.out.vcf )
+    GIAB_HAPPY( EXTRACT_CONTROL.out.vcf,
+                Channel.value(file(params.giab_truth_vcf)),
+                Channel.value(file(params.giab_truth_vcf + '.tbi')),
+                Channel.value(file(params.giab_truth_bed)),
+                ch_bed, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai )
+    PLOT_GIAB( GIAB_HAPPY.out.summary )
+
+    def ch_sum = GIAB_HAPPY.out.summary.mix(PLOT_GIAB.out.metrics).collect()
+    STAGE_REPORT( Channel.value('giab'), Channel.value('GIAB benchmarking (Stage 13)'),
+                  Channel.value('stage13_giab'),
+                  PLOT_GIAB.out.png.collect(), PLOT_GIAB.out.captions.collect(),
+                  ch_sum, Channel.value(synth) )
+    STAGE_PROVENANCE( Channel.value('giab'), Channel.value('stage13_giab'),
+        Channel.value("--input vcf=${params.input_vcf} --input truth_vcf=${params.giab_truth_vcf} " +
+                      "--input truth_bed=${params.giab_truth_bed} --input panel_bed=${params.target_bed} " +
+                      "--param giab_control_id=${params.giab_control_id} --tool bcftools") )
 }
