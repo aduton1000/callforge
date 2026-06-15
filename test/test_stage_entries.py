@@ -19,8 +19,15 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, "bin")
 
 def _nextflow():
-    return os.environ.get("CALLFORGE_NEXTFLOW") or shutil.which("nextflow") \
-        or ("/tmp/nextflow" if os.path.exists("/tmp/nextflow") else None)
+    return os.environ.get("CALLFORGE_NEXTFLOW") or shutil.which("nextflow")
+
+# Make a skipped Nextflow layer LOUD (never a silent pass): announce it up front.
+if not _nextflow():
+    sys.stderr.write(
+        "\n[test_stage_entries] NOTE: no nextflow binary found — the Nextflow layer "
+        "(baseline/anno preview, real burden run + fail-loud) will be reported as "
+        "SKIPPED, not run.\n  Set CALLFORGE_NEXTFLOW=/path/to/nextflow (or put `nextflow` "
+        "on PATH) to enable it.\n\n")
 
 def run(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
@@ -148,6 +155,26 @@ class CliStages(unittest.TestCase):
         self.assertIn("--stage burden", r.stdout)
         self.assertIn("--burden_engine regenie", r.stdout)
 
+    def test_default_injects_nondestructive_outdir(self):
+        r = self.cli("anno", "--print-cmd", "--input_vcf", "x.vcf.gz",
+                     "--genome_fasta", "ref.fa", "--target_bed", "t.bed")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--outdir results/standalone/anno_", r.stdout)
+
+    def test_in_place_opts_into_results(self):
+        r = self.cli("burden", "--print-cmd", "--in-place", "--input_vcf", "a.vcf.gz",
+                     "--input", "s.csv", "--target_bed", "t.bed")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--in_place true", r.stdout)
+        self.assertNotIn("results/standalone", r.stdout)
+
+    def test_explicit_outdir_respected(self):
+        r = self.cli("anno", "--print-cmd", "--input_vcf", "x.vcf.gz", "--genome_fasta",
+                     "ref.fa", "--target_bed", "t.bed", "--outdir", "/tmp/myrun")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--outdir /tmp/myrun", r.stdout)
+        self.assertNotIn("results/standalone", r.stdout)
+
 
 # ───────────────────────── layer 2: Nextflow (auto-skip) ─────────────────────────
 @unittest.skipUnless(_nextflow(), "no nextflow binary (set CALLFORGE_NEXTFLOW or PATH)")
@@ -171,9 +198,18 @@ class NextflowEntries(unittest.TestCase):
     def test_anno_entry_previews(self):
         if not os.path.exists(self.anno_vcf):
             self.skipTest("results/ fixture missing (run the test pipeline first)")
+        # non-destructive guard requires an explicit --outdir for a standalone run
         r = self._preview("--stage", "anno", "--input_vcf", self.anno_vcf,
-                          "--genome_fasta", self.genome, "--target_bed", self.bed)
+                          "--genome_fasta", self.genome, "--target_bed", self.bed,
+                          "--outdir", "results/standalone/_preview")
         self.assertIn("SUCCESS", r.stdout + r.stderr, r.stderr)
+
+    def test_standalone_guard_blocks_default_results(self):
+        # without --outdir/--in_place a standalone run must refuse to overwrite results/
+        r = self._preview("--stage", "burden", "--input_vcf", self.burden_vcf,
+                          "--input", self.sheet, "--target_bed", self.bed)
+        self.assertNotIn("SUCCESS", r.stdout + r.stderr)
+        self.assertIn("must not overwrite", r.stdout + r.stderr)
 
     def test_burden_entry_runs_and_fails_loud(self):
         if not os.path.exists(self.burden_vcf):

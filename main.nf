@@ -50,6 +50,14 @@ workflow {
     // `callforge <stage>` by the CLI. (Param dispatch — portable across Nextflow
     // versions; the strict parser disallows `-entry` for named workflows.)
     if (params.stage) {
+        // Non-destructive guard: a standalone stage must not silently overwrite the
+        // pipeline's results/ (the re-annotate / re-burden use cases are COMPARISONS).
+        def inplace = (params.in_place == true || "${params.in_place}".toLowerCase() == 'true')
+        if (!inplace && params.outdir == 'results') {
+            exit 1, "ERROR: a standalone stage run must not overwrite the pipeline's results/. " +
+                    "Pass --outdir <dir> (the `callforge <stage>` CLI auto-creates " +
+                    "results/standalone/<stage>_<timestamp>/), or --in_place true to update results/ in place."
+        }
         if      (params.stage == 'anno')   { ANNO()   }
         else if (params.stage == 'burden') { BURDEN() }
         else { exit 1, "ERROR: unknown stage '${params.stage}'. Available: anno, burden" }
