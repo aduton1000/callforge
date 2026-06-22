@@ -16,14 +16,14 @@ local refs_root    = "/shared/refs/callforge/GRCh38"
 
 -- Dependencies (adjust to your cluster's module names / container engine)
 depends_on("nextflow")
-depends_on("apptainer")   -- on a SingularityCE site use: depends_on("singularity")
+depends_on("singularity")   -- on an Apptainer site use: depends_on("apptainer")
 
 setenv("CALLFORGE_HOME", install_root)
 setenv("CALLFORGE_REFS", refs_root)
 setenv("CALLFORGE_SIF", pathJoin(install_root, "callforge.sif"))
 -- Engine the callforge-run wrapper composes into -profile hpc_slurm,<engine>.
--- The wrapper defaults to singularity; set apptainer here on an Apptainer site.
-setenv("CALLFORGE_ENGINE", "apptainer")
+-- Defaults to singularity (SingularityCE, this cluster); set apptainer on an Apptainer site.
+setenv("CALLFORGE_ENGINE", "singularity")
 setenv("CALLFORGE_CONTAINER_CACHE", pathJoin(os.getenv("HOME") or "/tmp", ".callforge/container_cache"))
 
 prepend_path("PATH", pathJoin(install_root, "share/bin"))

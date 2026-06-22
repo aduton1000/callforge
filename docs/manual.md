@@ -9,7 +9,7 @@ The pipeline runs each stage in its own pinned conda env or container (`env/*.ym
 `vep_image`, `happy_image`). Create them via `-profile conda` (Nextflow builds each
 `env/*.yml` on first use) or build the core container (`env/Dockerfile` / `env/callforge.def`).
 
-- **Linux / HPC**: native; `-profile hpc_slurm,apptainer` (or `,conda`).
+- **Linux / HPC**: native; `-profile hpc_slurm,singularity` (or `,apptainer`, or `,conda`).
 - **macOS / Apple Silicon**: `CONDA_SUBDIR=osx-64 mamba env create -f env/<x>.yml`
   (Rosetta) where a tool lacks an `osx-arm64` build; the report flags emulated stages.
   VEP and hap.py run from their official **containers** (robust across platforms).
@@ -19,9 +19,9 @@ The pipeline runs each stage in its own pinned conda env or container (`env/*.ym
 |---|---|
 | `test` | 3–4 synthetic samples, subset reference; minutes. Add `,docker` for VEP/hap.py. |
 | `local` | full pipeline on one machine (any Linux/macOS; `mac_local` is a deprecated alias). |
-| `hpc_slurm` | SLURM + Apptainer / shared conda; the production cohort run. |
+| `hpc_slurm` | SLURM + SingularityCE/Apptainer / shared conda; the production cohort run. |
 
-Compose an engine: `-profile test,docker`, `local,conda`, `hpc_slurm,apptainer`.
+Compose an engine: `-profile test,docker`, `local,conda`, `hpc_slurm,singularity` (or `,apptainer`).
 
 ## 3. Inputs (see `params.example.yaml`)
 - `--input` sample sheet CSV: `sample_id,fastq_1,fastq_2,sex?,phenotype?,covariate_*?,batch?`.
@@ -34,7 +34,7 @@ Compose an engine: `-profile test,docker`, `local,conda`, `hpc_slurm,apptainer`.
 ```bash
 bash test/make_test_data.sh && callforge run -profile test,docker                  # sanity
 callforge run -profile local,conda     -params-file params.full.yaml               # full (one machine)
-callforge run -profile hpc_slurm,apptainer -params-file params.full.yaml           # full (HPC)
+callforge run -profile hpc_slurm,singularity -params-file params.full.yaml          # full (HPC; or ,apptainer)
 ```
 
 ## 5. Outputs (`results/`)

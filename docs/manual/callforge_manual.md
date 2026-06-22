@@ -157,7 +157,10 @@ route.
 
 ```bash
 docker build -t callforge:0.1.0 -f env/Dockerfile .
-# Apptainer (HPC): apptainer build callforge.sif env/callforge.def
+# HPC image (same .sif, either engine):
+#   SingularityCE: sudo singularity build callforge.sif env/callforge.def
+#                  (unprivileged: singularity build --fakeroot … needs /etc/subuid+subgid)
+#   Apptainer:     apptainer build callforge.sif env/callforge.def
 ```
 
 ## 4.2 Shared HPC install (SLURM + Apptainer/Singularity)
@@ -782,9 +785,9 @@ callforge run \
 ```
 
 ```bash
-# the same on an HPC cluster (SLURM + Apptainer)
+# the same on an HPC cluster (SLURM + SingularityCE; or ,apptainer)
 callforge run \
-    -profile hpc_slurm,apptainer \
+    -profile hpc_slurm,singularity \
     -params-file params.full.yaml
 ```
 
@@ -793,7 +796,7 @@ callforge run \
 ```bash
 # runs CallForge straight from GitHub; version-pin with -r <tag/branch>
 nextflow run aduton1000/callforge -r v0.1.0 \
-    -profile hpc_slurm,apptainer \
+    -profile hpc_slurm,singularity \
     -params-file params.full.yaml
 ```
 
@@ -828,17 +831,18 @@ A CallForge run composes **two** profiles with a comma — an **execution** prof
   it is *not* Mac-specific and *not* developer-only (the name `mac_local` is a deprecated
   alias kept for backward compatibility). `local` caps total resource use at
   `--max_cpus`/`--max_memory` (§Compute resources); `hpc_slurm` requests resources per SLURM job.
-- **Packaging** (how dependencies are provided): **`conda`**, **`docker`**, or **`apptainer`**
-  — Nextflow activates the right per-stage env/container automatically (§4.4).
+- **Packaging** (how dependencies are provided): **`conda`**, **`docker`**, **`singularity`**
+  (SingularityCE), or **`apptainer`** — Nextflow activates the right per-stage env/container
+  automatically (§4.4).
 
 ```bash
-callforge run -profile local,conda      -params-file params.full.yaml   # this machine, conda envs
-callforge run -profile hpc_slurm,apptainer -params-file params.full.yaml # SLURM cluster, Apptainer images
+callforge run -profile local,conda         -params-file params.full.yaml # this machine, conda envs
+callforge run -profile hpc_slurm,singularity -params-file params.full.yaml # SLURM cluster, container images (or ,apptainer)
 ```
 
-`local,conda` = "run here, build each stage's conda env"; `hpc_slurm,apptainer` = "submit
-SLURM jobs, run each stage in its Apptainer image". Mix to taste (e.g. `local,docker` for the
-VEP/hap.py containers on a workstation).
+`local,conda` = "run here, build each stage's conda env"; `hpc_slurm,singularity` (or
+`,apptainer`) = "submit SLURM jobs, run each stage in its container image". Mix to taste
+(e.g. `local,docker` for the VEP/hap.py containers on a workstation).
 
 ## 8.1 Quickstart (test profile)
 
@@ -864,9 +868,9 @@ callforge run \
   -profile local,conda \
   -params-file params.full.yaml
 
-# 3'. or the cluster
+# 3'. or the cluster (SingularityCE; or ,apptainer)
 callforge run \
-  -profile hpc_slurm,apptainer \
+  -profile hpc_slurm,singularity \
   -params-file params.full.yaml
 ```
 
@@ -884,7 +888,7 @@ skip. Everything else (annotated VCF, per-variant TSV, CNV/STR/paralog) is produ
 
 ```bash
 callforge run \
-  -profile hpc_slurm,apptainer \
+  -profile hpc_slurm,singularity \
   -params-file params.full.yaml \
   --run_burden true \
   --burden_engine regenie \
