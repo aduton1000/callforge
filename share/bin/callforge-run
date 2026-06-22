@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Shared launcher for CallForge on an HPC cluster.
+#
+# Works WITH or WITHOUT a module system:
+#   • Lmod sites:   `module load callforge` sets CALLFORGE_HOME/_SIF/_REFS, then run this.
+#   • No-module sites: drop this script on a shared PATH (e.g. put
+#     <install_root>/share/bin on PATH). It resolves everything from environment
+#     variables + install-relative defaults — no `module load` required.
+#
+# Usage (with the site env sourced — see share/callforge-env.sh.example):
+#   callforge-run -params-file site.params.yaml --input samplesheet.csv --outdir results
+#   callforge-run --help
+# slurm_partition, container_image, bind_paths, genome_fasta, target_bed, the annotation
+# resources, etc. all belong in the params file; put the queue there
+# (slurm_partition: <queue>) so it is NOT a required flag. Override per-run with
+# --slurm_partition <queue> if needed.
+#
+# Environment (all optional; defaults derived from this script's install location):
+#   CALLFORGE_HOME     install/repo root        (default: parent of this script's share/bin)
+#   CALLFORGE_SIF      path to callforge.sif    (default: $CALLFORGE_HOME/callforge.sif)
+#   CALLFORGE_REFS     reference dir            (default: $CALLFORGE_HOME/refs)
+#   CALLFORGE_ENGINE   apptainer | singularity  (default: singularity — this cluster has no `apptainer`)
+#   CALLFORGE_PROFILE  full -profile string     (default: hpc_slurm,$CALLFORGE_ENGINE)
+#   CALLFORGE_BIND     host path(s) to bind into task containers (comma-separated)
+# Forwards all extra args straight through to `nextflow run`.
+set -euo pipefail
+
+# --- resolve install root WITHOUT Lmod -------------------------------------
+# This script lives at <CALLFORGE_HOME>/share/bin/callforge-run; derive the root
+# from its own location so it works when simply placed on PATH.
+_self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_default_home="$(cd "${_self_dir}/../.." && pwd)"
+CALLFORGE_HOME="${CALLFORGE_HOME:-$_default_home}"
+
+# --- container engine + profile (selectable; default singularity) ----------
+# Default to SingularityCE (this cluster has no `apptainer` binary); an Apptainer
+# site sets CALLFORGE_ENGINE=apptainer (or CALLFORGE_PROFILE=hpc_slurm,apptainer).
+ENGINE="${CALLFORGE_ENGINE:-singularity}"
+case "$ENGINE" in
+  apptainer|singularity) ;;
+  *) echo "[callforge-run] ERROR: CALLFORGE_ENGINE must be 'apptainer' or 'singularity' (got '$ENGINE')" >&2; exit 2 ;;
+esac
+PROFILE="${CALLFORGE_PROFILE:-hpc_slurm,${ENGINE}}"
+
+# --- image + refs with install-relative defaults ---------------------------
+SIF="${CALLFORGE_SIF:-${CALLFORGE_HOME}/callforge.sif}"
+REFS="${CALLFORGE_REFS:-${CALLFORGE_HOME}/refs}"
+
+# Host paths to bind into task containers (engine-neutral). Needed when refs are
+# referenced in place outside $HOME/CWD (e.g. /hpc). Empty = no bind.
+BIND="${CALLFORGE_BIND:-}"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<EOF
+callforge-run — shared HPC launcher (forwards to: nextflow run main.nf)
+  CALLFORGE_HOME    = ${CALLFORGE_HOME}
+  CALLFORGE_ENGINE  = ${ENGINE}
+  CALLFORGE_PROFILE = ${PROFILE}
+  CALLFORGE_SIF     = ${SIF}
+  CALLFORGE_REFS    = ${REFS}
+  CALLFORGE_BIND    = ${BIND:-<none>}   # container bind mounts (exports SINGULARITY_BIND/APPTAINER_BIND + --bind_paths)
+
+usage: callforge-run -params-file site.params.yaml --input samplesheet.csv --outdir results [nextflow args]
+Put slurm_partition/container_image/bind_paths/genome_fasta/target_bed/resources in the
+params file; override with flags if needed.
+No module system required: source share/callforge-env.sh (or put <install_root>/share/bin on PATH).
+EOF
+  exit 0
+fi
+
+# Wire the image to process.container (via --container_image) so every task runs
+# inside it. The engine itself is turned on by the composed profile; both engines
+# run the same .sif. (An empty/missing image + enabled engine fails loudly in main.nf.)
+extra=()
+if [[ -f "$SIF" ]]; then
+  extra+=("--container_image" "$SIF")
+else
+  echo "[callforge-run] note: no .sif at '$SIF' — set CALLFORGE_SIF to point at callforge.sif, or pass --container_image. Without an image the run will fail loudly (engine enabled, no image)." >&2
+fi
+# Make referenced-in-place refs visible inside tasks, via BOTH supported routes:
+#   1) export SINGULARITY_BIND / APPTAINER_BIND — the engine reads these; Nextflow
+#      whitelists them (engine profiles) so they survive its per-task env scrub. This
+#      is the robust route (the engine-native var is honored host-side).
+#   2) --bind_paths — applied via process.containerOptions (a per-task closure that
+#      sees the merged value). Kept for resilience across Nextflow versions.
+# Duplicate binds of the same path are idempotent.
+if [[ -n "$BIND" ]]; then
+  export SINGULARITY_BIND="${SINGULARITY_BIND:+$SINGULARITY_BIND,}$BIND"
+  export APPTAINER_BIND="${APPTAINER_BIND:+$APPTAINER_BIND,}$BIND"
+  extra+=("--bind_paths" "$BIND")
+fi
+
+# Prefer a vendored, version-pinned launcher if present; else a system `nextflow`.
+NF="nextflow"
+if [[ -x "${CALLFORGE_HOME}/.tools/nextflow" ]]; then
+  NF="${CALLFORGE_HOME}/.tools/nextflow"
+fi
+
+echo "[callforge-run] ${NF} run ${CALLFORGE_HOME}/main.nf -profile ${PROFILE} ${extra[*]:-} $*" >&2
+exec "$NF" run "${CALLFORGE_HOME}/main.nf" \
+    -profile "${PROFILE}" \
+    ${extra[@]+"${extra[@]}"} "$@"

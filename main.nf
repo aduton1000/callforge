@@ -19,7 +19,7 @@ def helpMessage() {
     ║  CallForge ${workflow.manifest.version}  —  targeted-capture germline analysis  ║
     ╚══════════════════════════════════════════════════════════════════════╝
     Usage:
-      nextflow run main.nf -profile <test|local|hpc_slurm>[,conda|,docker|,apptainer] \\
+      nextflow run main.nf -profile <test|local|hpc_slurm>[,conda|,docker|,apptainer|,singularity] \\
         --input samplesheet.csv --genome_fasta noalt.fa \\
         --target_bed final_covered_targets.bed [--captureforge_dir <run>]
 
@@ -44,6 +44,26 @@ def resolveCF(explicit, candidates, placeholder) {
 
 workflow {
     if (params.help) { helpMessage(); return }
+
+    // ── Deployment guards (fire for both the full pipeline AND stage subcommands) ──
+    // Guard: an enabled container engine with no image silently runs tasks on the
+    // HOST (host tools may be incomplete — e.g. no gatk/bwa-mem2/matplotlib). Fail
+    // loudly instead. (VEP/hap.py/DeepVariant pin their own images and are exempt.)
+    if (workflow.containerEngine && !params.container_image) {
+        exit 1, "ERROR: container engine '${workflow.containerEngine}' is enabled but --container_image is unset.\n" +
+                "  Set it to the image so tasks run inside the container, e.g.\n" +
+                "    singularity/apptainer:  --container_image /path/to/callforge.sif\n" +
+                "    docker:                 --container_image callforge:0.1.0\n" +
+                "  (or omit the engine profile to run natively on the host / under conda)."
+    }
+    // Guard: under the SLURM executor (profile hpc_slurm), submitting with no partition
+    // relies on a default that may not exist on this cluster. Fail loudly rather than
+    // letting sbatch reject every job. Only fires for hpc_slurm (local/test have none).
+    if (workflow.profile.tokenize(',').contains('hpc_slurm') && !params.slurm_partition) {
+        exit 1, "ERROR: SLURM executor selected but --slurm_partition is unset. Set it to your cluster's partition,\n" +
+                "  e.g. --slurm_partition global  (or set slurm_partition: <queue> in your params file).\n" +
+                "  Find valid partitions with: sinfo -s"
+    }
 
     // ── Stage subcommands ────────────────────────────────────────────────────
     // `nextflow run main.nf --stage <name> --<inputs…>` runs ONE stage standalone on

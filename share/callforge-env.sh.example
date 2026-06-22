@@ -1,0 +1,44 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  CallForge — site environment (EXAMPLE)
+#
+#  Fill this in ONCE per cluster, then source it from each user's ~/.bashrc
+#  (or a shared profile.d snippet). After sourcing, `callforge` and
+#  `callforge-run` are on PATH and the container bind is configured — so a run
+#  is just:
+#
+#      callforge-run -params-file <site>.params.yaml --input samplesheet.csv --outdir results
+#
+#  Copy to a real path and edit the values marked [EDIT]:
+#      cp share/callforge-env.sh.example /hpc/opt/callforge/callforge-env.sh
+#      echo 'source /hpc/opt/callforge/callforge-env.sh' >> ~/.bashrc
+#
+#  All paths below are EXAMPLES (the "/hpc/..." form is one site's layout).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Install/repo root (the directory containing main.nf, bin/, share/).
+export CALLFORGE_HOME="/hpc/opt/callforge"                  # [EDIT]
+
+# Put both the wrapper (share/bin) and the helper scripts (bin) on PATH.
+export PATH="$CALLFORGE_HOME/share/bin:$CALLFORGE_HOME/bin:$PATH"
+
+# Container image built from env/callforge.def (see docs/hpc_deployment.md §1).
+export CALLFORGE_SIF="$CALLFORGE_HOME/callforge.sif"        # [EDIT if elsewhere]
+
+# Reference + resource root (no-alt genome FASTA + .fai/.dict, target BED, VEP cache,
+# gnomAD-AFR / dbSNP / ClinVar VCFs, PhyloP bigWig, known-sites, somalier sites, GIAB …).
+export CALLFORGE_REFS="/hpc/refs/callforge/GRCh38"          # [EDIT]
+
+# Container engine: singularity (default) or apptainer. Same .sif either way.
+export CALLFORGE_ENGINE="singularity"                       # [EDIT if Apptainer site]
+
+# Host path(s) to bind into task containers. REQUIRED when references live outside
+# $HOME/CWD (e.g. under /hpc): Singularity/Apptainer auto-mount only $HOME, /tmp,
+# and CWD, and the annotation databases / VEP cache are referenced in place. The
+# wrapper exports SINGULARITY_BIND/APPTAINER_BIND from this (whitelisted so they
+# survive Nextflow's task env-scrub) and also passes --bind_paths. Comma-separate
+# multiple roots. Leave empty if all refs live under $HOME/CWD.
+export CALLFORGE_BIND="/hpc"                                # [EDIT or unset]
+
+# Shared, read-only conda? Point the package cache at a writable dir to avoid
+# "cannot set permissions" on the shared pkgs cache. Uncomment + edit if needed.
+# export CONDA_PKGS_DIRS="$HOME/.conda/pkgs"                # [EDIT]

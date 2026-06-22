@@ -105,9 +105,9 @@ feed in from the side.
 **Nextflow / profile model.** `main.nf` calls one subworkflow (`subworkflows/callforge.nf`)
 that wires modules in `modules/`. Behaviour is set by **profiles** composed on the command
 line: an execution profile (`test`, `local`, `hpc_slurm`) plus an environment engine
-(`conda`, `docker`, `apptainer`). Each process declares its own pinned conda env
-(`env/*.yml`) or a pinned container (VEP, hap.py), so `-profile ...,conda` or `,apptainer`
-builds exactly what each stage needs.
+(`conda`, `docker`, `apptainer`, `singularity`). Each process declares its own pinned conda
+env (`env/*.yml`) or a pinned container (VEP, hap.py, DeepVariant), so `-profile ...,conda`,
+`,apptainer`, or `,singularity` builds exactly what each stage needs.
 
 **Engine options** (see §7 for full defaults): SNV/indel `--caller gatk|deepvariant`;
 joint method `--joint_method genomicsdb|combinegvcfs`; CNV `--cnv_caller cnvkit|gatk_gcnv`;
@@ -160,35 +160,46 @@ docker build -t callforge:0.1.0 -f env/Dockerfile .
 # Apptainer (HPC): apptainer build callforge.sif env/callforge.def
 ```
 
-## 4.2 Shared HPC install (Ubuntu 24.04 SLURM cluster)
+## 4.2 Shared HPC install (SLURM + Apptainer/Singularity)
 
-The production cohort run is intended for the cluster (native linux-64; no Rosetta). The
-`hpc_slurm` profile uses the SLURM executor (global, cluster-wide across the nodes) and
-Apptainer for the containerized tools.
+The production cohort run is intended for the cluster (native linux-64; no emulation). The
+`hpc_slurm` profile uses the SLURM executor and runs tasks inside one container image —
+under **either Apptainer or SingularityCE** (compose `hpc_slurm,apptainer` or
+`hpc_slurm,singularity`; both run the same `.sif`), or shared conda (`hpc_slurm,conda`).
+This is a brief orientation; **`docs/hpc_deployment.md` is the complete, authoritative
+procedure** (build → stage references → configure → run → troubleshoot). All paths here are
+site **examples**.
 
 ```bash
-# shared conda at /hpc/opt/conda
-source /hpc/opt/conda/etc/profile.d/conda.sh
-mamba env create -p /hpc/opt/conda/envs/callforge          -f env/callforge.yml
-mamba env create -p /hpc/opt/conda/envs/callforge-annotate -f env/annotate.yml
-# ... and cohortqc / cnv / str / happy / burden / deepvariant as needed
+# 1. build the core image (Docker is usually forbidden on clusters)
+apptainer build callforge.sif env/callforge.def          # or: singularity build …
 
-# Apptainer image for the core tools (Docker is usually forbidden on clusters)
-apptainer build callforge.sif env/callforge.def
-export APPTAINER_BINDPATH=/data/refs,/data/annotation_db,$HOME/.vep   # mount resources
-
-# run
-callforge run -profile hpc_slurm,apptainer -params-file params.full.yaml \
-  --slurm_partition compute \
-  --slurm_account mylab \
-  --scratch_dir /scratch/$USER
+# 2. run — wire the image to every task with --container_image, and bind the root that
+#    holds your references (auto-mounts cover only $HOME/tmp/CWD). VEP/hap.py/DeepVariant
+#    pull their own official images automatically.
+export SINGULARITY_BIND=/hpc        # APPTAINER_BIND on an Apptainer site; survives env-scrub
+callforge run -profile hpc_slurm,singularity -params-file site.params.yaml \
+  --container_image /shared/apps/callforge/callforge.sif \
+  --input samplesheet.csv --slurm_partition <queue> --scratch_dir /scratch/$USER
 ```
 
-An **Lmod** module + launcher wrapper is the recommended front door (set `PATH` to the
-shared Nextflow, source the shared conda, set `APPTAINER_BINDPATH`); see
-`docs/hpc_deployment.md`. `conf/hpc_slurm.config` sets a shared conda cache so each env
-builds once cluster-wide; `--slurm_partition` / `--slurm_account` / `--scratch_dir` are
-overridable. Heavy steps (`index`, `align`, `large` labels) get bigger slots.
+Two guards fail the run **loudly at launch** rather than mid-run: a container engine with
+no `--container_image` (which would silently fall back to host tools), and `hpc_slurm` with
+no `--slurm_partition` (no `normal` default — discover yours with `sinfo -s`).
+
+The recommended front door is the **`callforge-run` wrapper** with a sourced site env file
+(no module system required) or an **Lmod** module — see `docs/hpc_deployment.md §5`. It puts
+`container_image`, `bind_paths`, `slurm_partition`, and the references in the params file /
+env once, so a run collapses to:
+
+```bash
+callforge-run -params-file site.params.yaml --input samplesheet.csv --outdir results
+```
+
+`conf/hpc_slurm.config` sets a shared container-image cache and conda-env cache so each is
+built/pulled once cluster-wide; `--slurm_partition` / `--slurm_account` / `--slurm_queue_opts`
+/ `--scratch_dir` are overridable. Heavy steps (`index`, `align`, `large` labels) get bigger
+slots (16 cpu / 48–64 GB).
 
 ## 4.3 The `callforge` command (unified CLI)
 
@@ -589,7 +600,7 @@ params unset.
 
 Set parameters via `-params-file params.yaml` (see `params.example.yaml`) or `--key value`.
 Profiles set executor + resource ceilings: **`test`** (3–4 synthetic samples, minutes),
-**`local`** (full, one machine; `mac_local` is a deprecated alias), **`hpc_slurm`** (SLURM + Apptainer/shared-conda).
+**`local`** (full, one machine; `mac_local` is a deprecated alias), **`hpc_slurm`** (SLURM + Apptainer/SingularityCE/shared-conda).
 
 **Key tunables (real defaults).**
 
@@ -658,6 +669,96 @@ job** (e.g. `index`/`align` get 16 cores) and `--max_cpus`/`--max_memory` bound 
 `-process.cpus=N`, or supply a custom config with `-c my.config` (e.g. a `withName:` block to
 retune a specific process). The defaults live in `conf/base.config` (per-label) and each
 profile's `conf/*.config`.
+
+## 7.2 Parameter Reference (complete)
+
+Every CallForge parameter, its real default, whether it is required, and its **provenance**
+— where the value comes from in a deployed setup:
+
+- **[install]** — set once per cluster in the site env file (`callforge-env.sh`: the
+  `CALLFORGE_*` vars the wrapper turns into flags).
+- **[site]** — set once per cluster in the params file (`-params-file`): references,
+  databases, container image, queue.
+- **[per-run]** — you provide every run (the minimal set).
+- **[optional]** — has a sane default; set only to override.
+- **[stage-dependent]** — only needed when that stage/engine/branch runs.
+
+| Parameter | What it is | Required? | Default | Provenance |
+|---|---|---|---|---|
+| `--input` | sample sheet CSV (`sample_id,fastq_1,fastq_2[,sex,phenotype,covariate_*,batch]`) | **yes** (full pipeline) | `null` | [per-run] |
+| `--genome_fasta` | no-alt primary-assembly FASTA (same build/contig naming as the BED) | **yes** | `null` | [site] |
+| `--target_bed` | panel BED (CaptureForge `final_covered_targets.bed` or any panel BED) | **yes** | `null` | [site] |
+| `--panel_name` | label stamped on outputs | no | `callforge_panel` | [per-run]/[optional] |
+| `--captureforge_dir` | CaptureForge `results/<run>` dir (auto-finds metrics.json + baits.csv) | no | `null` | [optional] |
+| `--cf_metrics_json` / `--cf_baits_csv` | explicit CaptureForge artifacts | no | `null` | [optional] |
+| `--gene_metadata` | pre-built per-gene metadata TSV (use **without** CaptureForge) | no | `null` | [optional] |
+| `--paralog_genes` | comma list of paralog genes | no | `null` | [optional] |
+| `--str_catalog` | ExpansionHunter catalog JSON (else built from STR targets) | no | `null` | [optional] |
+| `--genome_build` | reference build label | no | `GRCh38` | [optional] |
+| `--species` | VEP species | no | `homo_sapiens` | [optional] |
+| `--resource_dirs` | comma list scanned by resource discovery | no | `$HOME,/usr/local/share,/opt` | [site] |
+| `--resource_manifest` | pre-built manifest JSON (skip discovery) | no | `null` | [site] |
+| `--allow_download` | fetch a missing **required** DB | no | `false` | [optional] |
+| `--vep_cache` / `--vep_release` | VEP cache dir / release | no (else discovered) | `null` / `110` | [site] |
+| `--gnomad_vcf` / `--gnomad_af_field` | gnomAD VCF (prefer AFR) / source AF field | no | `null` / `AF_afr` | [site] |
+| `--dbsnp_vcf` / `--clinvar_vcf` / `--phylop_bw` | annotation databases | no | `null` | [site] |
+| `--known_sites` | BQSR known-sites (dbSNP + Mills + 1000G), comma list | no (else BQSR skipped) | `null` | [site] |
+| `--vcfanno_toml` | bring-your-own vcfanno databases (organism-generic) | no | `null` | [site] |
+| `--scope_min` | min fraction of target contigs a DB must span (else UNFIT, fail loud) | no | `0.9` | [optional] |
+| `--ignore_unfit_resources` | proceed despite a region-limited DB (not advised) | no | `false` | [optional] |
+| `--adapter_r1` / `--adapter_r2` | fastp adapters (null = auto-detect) | no | `null` | [optional] |
+| `--fastp_qual` / `--fastp_min_len` | trim quality / min length | no | `20` / `30` | [optional] |
+| `--min_mean_target_depth` | QC gate: min mean target depth (×) | no | `30` | [optional] |
+| `--max_dup_rate` / `--min_on_target` / `--max_contamination` | QC gate thresholds | no | `0.40` / `0.40` / `0.03` | [optional] |
+| `--enforce_sex_check` | quarantine on sex mismatch | no | `true` | [optional] |
+| `--caller` | SNV/indel engine: `gatk` \| `deepvariant` | no | `gatk` | [optional] |
+| `--ploidy` / `--joint_method` | HaplotypeCaller ploidy / `genomicsdb`\|`combinegvcfs` | no | `2` / `genomicsdb` | [optional] |
+| `--snp_filter_expr` / `--indel_filter_expr` | GATK hard-filter JEXL (WGS/WES defaults) | no | see config | [optional] |
+| `--cnv_caller` / `--cnv_method` / `--cnv_segment_method` | CNVkit knobs | no | `cnvkit` / `hybrid` / `cbs` | [optional] |
+| `--cnv_min_samples_pon` | min QC-pass samples to build a panel-of-normals | no | `5` | [optional] |
+| `--str_motif` | fallback motif when building an STR catalog | no | `GT` | [optional] |
+| `--paralog_min_mq` | MQ below which a paralog-region call is flagged | no | `50` | [optional] |
+| `--vep_mode` / `--gtf` / `--vep_extra` | `cache`\|`gtf`; GTF for gtf mode; extra VEP flags | no | `cache` / `null` / `''` | [optional]/[stage-dependent] |
+| `--vep_image` | VEP container | no | `ensemblorg/ensembl-vep:release_110.0` | [optional] |
+| `--somalier_sites` | somalier sites VCF (cohort QC) | no | `null` | [stage-dependent] |
+| `--giab_control_id` | control `sample_id` in the callset to benchmark | no | `null` | [per-run] |
+| `--giab_truth_vcf` / `--giab_truth_bed` | GIAB truth VCF / high-confidence BED | no | `null` | [site] |
+| `--happy_image` | hap.py container | no | `jmcdani20/hap.py:v0.3.12` | [optional] |
+| `--run_burden` | run the burden stage (auto-skipped without a phenotype column) | no | `true` | [optional] |
+| `--burden_engine` | `regenie` \| `skat` \| `collapse` | no | `regenie` | [optional] |
+| `--burden_af_max` / `--burden_csq` | rare-AF threshold / qualifying consequences | no | `0.01` / LoF+missense set | [optional] |
+| `--n_ancestry_pcs` / `--covariates` | ancestry PCs / covariate_* columns (''=all) | no | `4` / `''` | [optional] |
+| `--container_image` | image every task runs in (.sif path \| docker tag) | **yes if an engine is enabled** | `''` | [site]/[install] |
+| `--bind_paths` | host path(s) to bind into containers for in-place refs | no | `''` | [site]/[install] |
+| `--slurm_partition` | SLURM queue | **yes under `hpc_slurm`** | `null` | [site] |
+| `--slurm_account` / `--slurm_queue_opts` / `--scratch_dir` | SLURM account / extra opts / scratch | no | `''` / `''` / `/tmp` | [optional] |
+| `--max_cpus` / `--max_memory` / `--max_time` | per-profile compute ceilings | no | per profile | [optional] |
+| `--outdir` / `--publish_mode` | results directory / publish mode | no | `results` / `copy` | [per-run]/[optional] |
+
+Stage-subcommand-only inputs (read only under `--stage`/`callforge <stage>`; ignored by the
+full `callforge run`): `--stage`, `--input_vcf`, `--input_bams`, `--fastq_1`/`--fastq_2`/
+`--sample_id`, `--cohort_qc_json`, `--in_place`. See §8.10 and `callforge <stage> --help`.
+
+> **Annotated, ready-to-edit templates.** `params.example.yaml` (local) and
+> `conf/cluster.params.example.yaml` (cluster) carry these with site-example values; the
+> `callforge run --help` epilog lists them inline with the same provenance tags.
+
+### Expanded vs. short run (the same run, two ways)
+
+```bash
+# expanded — every value on the command line (illustrative; you rarely type this)
+callforge run -profile hpc_slurm,singularity \
+    --container_image /shared/apps/callforge/callforge.sif \
+    --slurm_partition compute --scratch_dir /scratch/$USER --bind_paths /hpc \
+    --input samplesheet.csv \
+    --genome_fasta /hpc/refs/callforge/GRCh38/GRCh38_noalt_primary.fa \
+    --target_bed /hpc/refs/callforge/GRCh38/final_covered_targets.bed \
+    --resource_dirs /hpc/refs/callforge/annotation_db \
+    --caller gatk --burden_engine regenie --outdir results
+
+# short — site values live in the env file + params file; the wrapper supplies image+bind
+callforge-run -params-file site.params.yaml --input samplesheet.csv --outdir results
+```
 
 # 8. Running — step-by-step scenarios
 
@@ -830,8 +931,12 @@ no-alt reference for that build, target BED, a VEP cache (or `--vep_mode gtf` wi
 
 ## 8.7 HPC run
 
-See §4.2. `-profile hpc_slurm,apptainer`; SLURM is global/cluster-wide; resources are copied
-to a shared path and bound into Apptainer.
+See §4.2 and the full procedure in `docs/hpc_deployment.md`. Compose
+`-profile hpc_slurm,singularity` (SingularityCE) or `hpc_slurm,apptainer` (both run the same
+`.sif`), wire the image with `--container_image`, set `--slurm_partition <queue>` (no default),
+and bind the references' root (`export SINGULARITY_BIND=/path` or `--bind_paths`). The
+`callforge-run` wrapper + a sourced site env file reduce a run to
+`callforge-run -params-file site.params.yaml --input samplesheet.csv --outdir results`.
 
 ## 8.8 Choosing engine alternatives
 
@@ -1151,6 +1256,10 @@ Before the production cohort:
 
 | Symptom | Cause / fix |
 |---|---|
+| `container engine … is enabled but --container_image is unset` | wire the `.sif`/tag: `--container_image /path/callforge.sif` (or omit the engine profile). Prevents the silent host-fallback bug |
+| `SLURM executor selected but --slurm_partition is unset` | set `--slurm_partition <queue>` (no default); find one with `sinfo -s` |
+| Task fails "command not found" / "No such file" on a ref under a container | bind the ref's root: `export SINGULARITY_BIND=/hpc` (APPTAINER_BIND on Apptainer) or `--bind_paths /hpc` — auto-mounts cover only `$HOME`/`tmp`/CWD |
+| `reference_invariant FAIL` (alt contigs / chr-style mismatch / interval overrun) | use the no-alt primary assembly; make the target BED's chr-prefix style match the reference |
 | Scope-gate FAIL on a DB | region-subset DB — supply a genome-wide replacement (message names it) |
 | Annotation values missing | chr-naming mismatch — handled by reconciliation; `verify_annotation.py` fails loud if not, check the manifest naming |
 | VEP "CacheDir" error in gtf mode | do not pass `--offline` with `--gtf` (cache mode only) |
