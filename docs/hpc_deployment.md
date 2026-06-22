@@ -139,6 +139,18 @@ callforge run \
 export SINGULARITY_BIND=/hpc      # APPTAINER_BIND=/hpc on an Apptainer site; [cluster-specific]
 ```
 
+> **Run from a writable directory — not the shared install.** Nextflow writes its run state
+> (`.nextflow/` history + `history.lock`, `.nextflow.log`, and `work/`) to the **current
+> directory** (its launchDir). The shared install under `/shared/apps/callforge` (or
+> `/hpc/opt/callforge`) is read-only for regular users, so launching from there fails with the
+> cryptic `.nextflow/history.lock (Permission denied)`. Always `cd` into a writable dir first
+> (your home or a scratch project dir, as the `cd /scratch/$USER/run1` above shows). The launcher
+> pins the log to `<cwd>/.nextflow.log` and `work/` to `<cwd>/work`, points the Nextflow launcher's
+> own cache at `$NXF_HOME` (`~/.nextflow`), and **refuses to start from a non-writable directory**
+> with a clear message. Note `-work-dir` (or `NXF_WORK`) relocates **only** `work/` — not
+> `.nextflow/`/`history.lock`/the log, which follow launchDir — so the writable-CWD rule still
+> applies. Override the run-state location with `CALLFORGE_RUNDIR=/path/to/writable`.
+
 > **`--container_image` is required when an engine is enabled.** It sets
 > `process.container`, so every task runs via `singularity exec <image> …` (the `.sif`
 > from §1). Without it, Nextflow turns the engine on but wires no image to processes —

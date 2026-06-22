@@ -65,6 +65,8 @@ callforge run \
 
 Required parameters: `--input`, `--genome_fasta`, `--target_bed` (see [`params.example.yaml`](params.example.yaml)).
 
+Runs write Nextflow state (`.nextflow/`, `.nextflow.log`, `work/`) to the **current directory**, so launch from a **writable dir** (your home or a project dir) — never a read-only shared install, which would fail with `.nextflow/history.lock (Permission denied)`. The `callforge-run` cluster wrapper pins the log and `work/` under the current dir and refuses to start from a non-writable one; override scratch with `-work-dir`/`NXF_WORK` or the run dir with `CALLFORGE_RUNDIR`.
+
 **Helpers:**
 
 ```bash

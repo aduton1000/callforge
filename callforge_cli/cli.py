@@ -65,6 +65,41 @@ def _run_bin_via_argv(script, rest):
         sys.argv = old
 
 
+def _run_state(passthrough):
+    """Pin Nextflow's run state to a USER-WRITABLE dir, never the read-only shared
+    install. Nextflow anchors .nextflow/ (history, history.lock, cache) and the log to
+    launchDir == the process CWD, and -work-dir moves ONLY work/ — not those. So we
+    launch from the user's CWD (never cd into the install) and, belt-and-suspenders,
+    point the log + work dir + the launcher's own scratch (NXF_HOME) at user space.
+
+    Returns (rundir, core_flags, run_flags, env): core_flags go BEFORE `run` (-log is a
+    core option), run_flags after it (-work-dir is a run option)."""
+    rundir = os.environ.get("CALLFORGE_RUNDIR") or os.getcwd()
+    core, run = [], []
+    has_log = any(a == "-log" or a.startswith("-log=") for a in passthrough)
+    has_work = any(a in ("-work-dir", "-w") or a.startswith("-work-dir=") for a in passthrough)
+    if not has_log:
+        core += ["-log", os.path.join(rundir, ".nextflow.log")]
+    if not has_work and not os.environ.get("NXF_WORK"):
+        run += ["-work-dir", os.path.join(rundir, "work")]
+    env = os.environ.copy()
+    env.setdefault("NXF_HOME", os.path.join(os.path.expanduser("~"), ".nextflow"))
+    return rundir, core, run, env
+
+
+def _require_writable(rundir):
+    """Refuse to run from a non-writable dir with a clear message — instead of letting
+    Nextflow emit the cryptic '.nextflow/history.lock (Permission denied)'."""
+    if not os.access(rundir, os.W_OK):
+        sys.stderr.write(
+            f"[callforge] ERROR: run directory is not writable: {rundir}\n"
+            "  CallForge writes run state (.nextflow/, logs, work/) to this directory.\n"
+            "  Run from a writable directory (your home or a project dir), e.g.:\n"
+            "    cd ~ && callforge run -params-file site.params.yaml --input samplesheet.csv --outdir results\n"
+            "  (or set CALLFORGE_RUNDIR=/path/to/writable to override).\n")
+        sys.exit(1)
+
+
 def _warn_env_if_local(passthrough):
     """Backstop: warn (do NOT auto-activate) if the `callforge` conda env is not on
     PATH for a LOCAL (non-container) run. The user stays in control.
@@ -213,14 +248,18 @@ def _launch_nextflow(pipeline_override, prefix_args, passthrough, print_cmd):
     prefix_args are CLI-injected flags (e.g. --stage anno); passthrough is everything
     the user typed (so -profile/-params-file/-resume/--<param> reach Nextflow)."""
     pipeline = _resolve_pipeline(pipeline_override)
-    cmd = ["nextflow", "run", pipeline, *prefix_args, *passthrough]
+    # Run from the user's CWD (launchDir), NOT the install — so .nextflow/ + logs +
+    # work/ land in user space, never the read-only shared repo.
+    rundir, core, run_flags, env = _run_state(passthrough)
+    cmd = ["nextflow", *core, "run", pipeline, *run_flags, *prefix_args, *passthrough]
     sys.stderr.write("[callforge] + " + " ".join(shlex.quote(c) for c in cmd) + "\n")
     if print_cmd or os.environ.get("CALLFORGE_DRY_RUN"):
         # transparency / testability: echo without launching Nextflow
         print(" ".join(shlex.quote(c) for c in cmd))
         return 0
+    _require_writable(rundir)
     try:
-        return subprocess.call(cmd)
+        return subprocess.call(cmd, env=env)
     except FileNotFoundError:
         sys.stderr.write("[callforge] ERROR: `nextflow` not found on PATH. Install "
                          "Nextflow (Java 17+) — see the manual §4.\n")
