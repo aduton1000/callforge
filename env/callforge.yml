@@ -39,6 +39,18 @@ dependencies:
                               #  build; or create the env via CONDA_SUBDIR=osx-64)
   # ---- aggregate reporting ----
   - multiqc=1.25
+  # ---- base utilities (lean micromamba base lacks these; Nextflow task wrappers
+  #      + shell scripts assume them inside the container). Left unpinned: base
+  #      utils, not analysis tools — pinning them risks solver conflicts. ----
+  - procps-ng              # provides `ps` — REQUIRED by Nextflow task metric collection
+  - coreutils              # date, stat, env, etc.
+  - grep
+  - sed
+  - gawk
+  - findutils              # find, xargs
+  - which
+  - gzip
+  - tar                    # staging / unstaging
   # ---- python + plotting / QC layer ----
   - python=3.11
   - pip=24.2

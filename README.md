@@ -38,7 +38,7 @@ pip install -e .                        # registers the `callforge` command
 callforge --version
 ```
 
-A run composes **two** profiles with a comma: an **execution** profile — `local` (this machine: any Linux/macOS, Windows via WSL2) or `hpc_slurm` (a SLURM cluster) — and a **packaging** profile — `conda`, `docker`, or `apptainer` — that selects how dependencies are provided. For example, `-profile local,conda` runs on this machine using conda environments. On a cluster, a shared conda environment plus Apptainer and an Lmod module put `callforge` on PATH for all users (see [`docs/hpc_deployment.md`](docs/hpc_deployment.md)).
+A run composes **two** profiles with a comma: an **execution** profile — `local` (this machine: any Linux/macOS, Windows via WSL2) or `hpc_slurm` (a SLURM cluster) — and a **packaging** profile — `conda`, `docker`, `apptainer`, or `singularity` (SingularityCE) — that selects how dependencies are provided. For example, `-profile local,conda` runs on this machine using conda environments; `-profile hpc_slurm,singularity` runs on a SingularityCE cluster. On a cluster, the `callforge-run` wrapper (with a sourced site env file) or an Lmod module reduces a run to a single command for all users (see [`docs/hpc_deployment.md`](docs/hpc_deployment.md)).
 
 > **Advanced/developer.** The raw forms work directly: `nextflow run main.nf …` and `python3 bin/…`. With repository access, the pipeline also runs straight from GitHub once a tag is published — `nextflow run aduton1000/callforge -r <tag> -profile local,conda …` (the repository is currently private, so this form is available to users with access).
 

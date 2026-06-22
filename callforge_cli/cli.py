@@ -65,6 +65,30 @@ def _run_bin_via_argv(script, rest):
         sys.argv = old
 
 
+def _warn_env_if_local(passthrough):
+    """Backstop: warn (do NOT auto-activate) if the `callforge` conda env is not on
+    PATH for a LOCAL (non-container) run. The user stays in control.
+
+    Suppressed for ANY container engine (the tools come from the image / per-stage
+    containers, not a host conda env) — including singularity, so an in-container
+    cluster run never emits a misleading 'conda activate callforge'. Also suppressed
+    for the test profile (its packaging profile is chosen explicitly)."""
+    joined = " ".join(passthrough)
+    engines = ("docker", "apptainer", "singularity", "podman", "shifter", "charliecloud", "sarus")
+    if any(e in joined for e in engines) or "--container_image" in passthrough:
+        return                                  # a container provides the tools
+    env = os.environ.get("CONDA_DEFAULT_ENV", "")
+    prefix = os.environ.get("CONDA_PREFIX", "")
+    if env.startswith("callforge") or prefix.rstrip("/").rsplit("/", 1)[-1].startswith("callforge"):
+        return
+    sys.stderr.write(
+        "[callforge] WARN: the `callforge` conda env was not detected. Local "
+        "(non-container) runs — especially Apple-Silicon arm64 — need its tools on PATH:\n"
+        "    conda activate callforge\n"
+        "  (Nextflow still activates the correct per-stage env per process with -profile conda.)\n"
+        "  Proceeding anyway (use a container engine, e.g. -profile <exec>,docker, to avoid this).\n")
+
+
 def _resolve_pipeline(override):
     """Resolve the Nextflow entry. Default: repo's main.nf. Override may be a path,
     a project dir, or a GitHub `owner/repo` name — passed to Nextflow verbatim."""
@@ -74,25 +98,113 @@ def _resolve_pipeline(override):
     return cand if os.path.isfile(cand) else "main.nf"
 
 
+# Pipeline parameters are declared in Nextflow (nextflow.config / conf/), NOT in
+# argparse — `callforge run` forwards them verbatim. argparse therefore can't own
+# their --help, so we document them here (printed as the `run` epilog) WITH provenance
+# so a reader knows, per flag, whether they set it or it is already wired.
+#   [install]          once in the site env file (CALLFORGE_HOME/_SIF/_REFS/_BIND/_ENGINE)
+#   [site]             once per cluster in the params file (-params-file)
+#   [per-run]          you provide every run (the minimal set)
+#   [optional]         has a sane default; set only to override (default shown)
+#   [stage-dependent]  only needed when that stage/engine/branch runs
+# Defaults below are the ACTUAL nextflow.config / conf defaults (no invented values).
+PASSTHROUGH_HELP = """\
+Nextflow pipeline parameters (forwarded to `nextflow run`; declared in
+nextflow.config / conf/, so they are passthrough — not listed under "options" above).
+Provenance: [install]=env file once · [site]=params file once per cluster ·
+[per-run]=every run · [optional]=defaulted override · [stage-dependent]=only when that stage runs.
+
+  -profile NAMES        [per-run] execution+packaging, composed: test|local|hpc_slurm
+                        with conda|docker|apptainer|singularity (e.g. local,conda)
+  -params-file FILE     [site] YAML carrying the site values (genome, target BED, DBs, …)
+
+ inputs (REQUIRED)
+  --input PATH          [per-run] REQUIRED sample sheet CSV
+                        (sample_id,fastq_1,fastq_2[,sex,phenotype,covariate_*,batch])
+  --genome_fasta PATH   [site] REQUIRED no-alt primary-assembly FASTA (same build/contig
+                        naming as the target BED; .fai/.dict built if absent)
+  --target_bed PATH     [site] REQUIRED panel BED (CaptureForge final_covered_targets.bed
+                        or any panel BED)
+
+ CaptureForge handoff (optional enrichment — CNV callability / STR / paralog / burden groups)
+  --captureforge_dir PATH [optional] results/<run> dir (auto-finds metrics.json + baits.csv)
+  --cf_metrics_json PATH  [optional] explicit CaptureForge metrics.json
+  --gene_metadata PATH    [optional] pre-built per-gene metadata TSV (use WITHOUT CaptureForge;
+                          build it with `callforge metadata`)
+  --paralog_genes LIST    [optional] comma list (e.g. CD209,CASP1,CR1,HP,CFH)
+  --str_catalog PATH      [optional] ExpansionHunter catalog JSON (else built from STR targets)
+
+ reference / annotation resources (referenced in place → cover their root with --bind_paths)
+  --resource_dirs LIST  [site] comma list scanned by discovery (default $HOME,/usr/local/share,/opt)
+  --allow_download BOOL [optional] fetch a missing required DB (default false)
+  --vep_cache PATH      [site] VEP cache dir (else discovered)        --vep_release N (110)
+  --gnomad_vcf PATH     [site] gnomAD VCF (prefer AFR)               --gnomad_af_field X (AF_afr)
+  --dbsnp_vcf PATH      [site] dbSNP VCF                              --clinvar_vcf PATH [site]
+  --phylop_bw PATH      [site] PhyloP bigWig                         --known_sites LIST [site] (BQSR)
+  --vcfanno_toml PATH   [site] bring-your-own vcfanno DBs (organism-generic)
+  --scope_min F         [optional] min fraction of target contigs a DB must span (0.9);
+                        a region-limited DB is flagged UNFIT and fails loud
+  --species NAME        [optional] VEP species (default homo_sapiens)
+  --genome_build STR    [optional] label (default GRCh38)
+
+ container / HPC
+  --container_image X   [site] image every task runs in (.sif path | docker tag).
+                        REQUIRED when a container engine is enabled (else fails loudly);
+                        the callforge-run wrapper supplies it from CALLFORGE_SIF
+  --bind_paths PATHS    [site] host path(s) to bind into containers for in-place refs
+                        (genome / annotation DBs / VEP cache). Default: none. Comma-separated
+  --slurm_partition Q   [site] SLURM queue. REQUIRED under -profile hpc_slurm (no safe
+                        default; fails loudly if unset). Find one with `sinfo -s`
+  --slurm_account S     [optional] SLURM account (--account=...)
+  --slurm_queue_opts S  [optional] extra sbatch/clusterOptions
+  --scratch_dir PATH    [optional] per-task scratch under SLURM (default /tmp)
+
+ analysis options (all [optional]/[stage-dependent]; defaults shown)
+  --caller X (gatk: gatk|deepvariant)        --ploidy N (2)   --joint_method X (genomicsdb)
+  --cnv_caller X (cnvkit)  --cnv_method X (hybrid)  --cnv_segment_method X (cbs)
+  --cnv_min_samples_pon N (5)   --str_motif X (GT)   --paralog_min_mq N (50)
+  --vep_mode X (cache|gtf)  --gtf PATH (for vep_mode=gtf)  --vep_image X (ensemblorg/ensembl-vep:release_110.0)
+  --min_mean_target_depth N (30)  --max_dup_rate F (0.40)  --min_on_target F (0.40)
+  --max_contamination F (0.03)  --enforce_sex_check BOOL (true)
+  --run_burden BOOL (true; auto-skip if no phenotype)  --burden_engine X (regenie|skat|collapse)
+  --burden_af_max F (0.01)  --burden_csq LIST  --n_ancestry_pcs N (4)  --covariates LIST
+  --giab_control_id ID  --giab_truth_vcf PATH  --giab_truth_bed PATH  --happy_image X
+  --somalier_sites PATH [stage-dependent] (cohortqc)
+  --max_cpus N  --max_memory X  --max_time X  (per-profile compute ceilings)
+
+ output
+  --panel_name STR      [per-run/optional] label on outputs (default callforge_panel)
+  --outdir PATH         [per-run] results directory (default results)
+
+See `params.example.yaml`, `conf/cluster.params.example.yaml`, and the manual's
+Parameter Reference for the full table. Per-stage conda envs/containers are activated
+automatically by Nextflow; you never activate them by hand."""
+
+
 # ----------------------------------------------------------------- subcommands
 def cmd_run(rest):
     ap = argparse.ArgumentParser(
         prog="callforge run", allow_abbrev=False, add_help=True,
-        description="Run the full CallForge pipeline (FASTQ -> annotated joint "
-                    "callset -> burden). Thin wrapper over `nextflow run`; all other "
-                    "flags (-profile, -params-file, -resume, --<param> overrides) are "
-                    "passed straight through to Nextflow.",
-        epilog="`-params-file params.full.yaml` supplies the reference (--genome_fasta), "
-               "target BED + CaptureForge handoff (--target_bed/--captureforge_dir), "
-               "annotation resources, and the sample sheet (--input). Per-stage conda "
-               "envs/containers are activated automatically by Nextflow; you never "
-               "activate them by hand.")
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Run the full CallForge pipeline (FASTQ -> annotated joint callset -> burden). "
+            "Thin wrapper over `nextflow run`; -profile, -params-file, -resume and every "
+            "--<param> pass straight through to Nextflow.\n\n"
+            "Most options are set ONCE (env file + params file), so a typical run is short:\n"
+            "    callforge run -profile local,conda -params-file params.yaml \\\n"
+            "        --input samplesheet.csv --outdir results\n"
+            "On a deployed cluster the wrapper makes it shorter still:\n"
+            "    callforge-run -params-file site.params.yaml --input samplesheet.csv --outdir results\n"
+            "The flags below OVERRIDE params-file values; you rarely type them all."),
+        epilog=PASSTHROUGH_HELP)
     ap.add_argument("--pipeline", metavar="PATH|owner/repo",
-                    help="Nextflow entry to run (default: the repo's main.nf). May be a "
-                         "path, a project directory, or a GitHub owner/repo.")
+                    help="[optional] Nextflow entry to run (default: the repo's main.nf). "
+                         "May be a path, a project directory, or a GitHub owner/repo.")
     ap.add_argument("--print-cmd", action="store_true",
-                    help="print the `nextflow run …` command and exit (do not execute)")
+                    help="[optional] print the `nextflow run …` command and exit (do not "
+                         "execute) — same as setting CALLFORGE_DRY_RUN")
     known, passthrough = ap.parse_known_args(rest)
+    _warn_env_if_local(passthrough)
     return _launch_nextflow(known.pipeline, [], passthrough, known.print_cmd)
 
 
@@ -139,29 +251,34 @@ def cmd_metadata(rest):
 # reusing the SAME modules as the full pipeline. The CLI injects `--stage <name>` and
 # passes everything else through to Nextflow. `required`/`optional` document the input
 # files the entry workflow consumes (kept in sync with subworkflows/entries.nf).
+#   Provenance tags (same model as `callforge run`):
+#     [per-run]          a data file you provide for THIS standalone run (the VCF/BAMs/sheet)
+#     [site]             a cluster reference set once (genome, target BED, annotation DBs)
+#     [optional]         defaulted; set only to override (default shown)
+#     [stage-dependent]  only needed for that engine/branch of the stage
 STAGES = {
     "align": {
         "desc": "FASTQ -> analysis-ready BAM(s) (bwa-mem2 + dedup + BQSR) + alignment QC",
         "required": [
-            "--input <CSV>             sample sheet (sample_id,fastq_1,fastq_2[,sex])",
-            "   OR --fastq_1 <R1> --fastq_2 <R2> [--sample_id <id>]   (single sample)",
-            "--genome_fasta <FASTA>    no-alt primary assembly (indices built if absent)",
-            "--target_bed <BED>        panel BED (the QC metrics feed the alignment plots)",
+            "[per-run] --input <CSV>             sample sheet (sample_id,fastq_1,fastq_2[,sex])",
+            "          OR --fastq_1 <R1> --fastq_2 <R2> [--sample_id <id>]   (single sample)",
+            "[site]    --genome_fasta <FASTA>    no-alt primary assembly (indices built if absent)",
+            "[site]    --target_bed <BED>        panel BED (the QC metrics feed the alignment plots)",
         ],
-        "optional": ["--known_sites <vcf,...>   BQSR known-sites (else BQSR is skipped)"],
+        "optional": ["[site] --known_sites <vcf,...>   BQSR known-sites (else BQSR is skipped)"],
         "outputs": "stage4_postalign/<sample>.analysis.bam + align_report.md "
                    "(mapping_rate, insert_size, dup_rate plots)",
     },
     "coverage": {
         "desc": "BAM(s) -> coverage/enrichment metrics + per-sample QC gate (pass/quarantine)",
         "required": [
-            "--input_bams <glob|csv>   analysis BAM(s) (with .bai)",
-            "--genome_fasta <FASTA>    reference (HsMetrics)",
-            "--target_bed <BED>        panel BED",
+            "[per-run] --input_bams <glob|csv>   analysis BAM(s) (with .bai)",
+            "[site]    --genome_fasta <FASTA>    reference (HsMetrics)",
+            "[site]    --target_bed <BED>        panel BED",
         ],
         "optional": [
-            "--input <CSV>             sample sheet to supply sex (else inferred 'U')",
-            "thresholds: --min_mean_target_depth/--min_on_target/--max_dup_rate/…",
+            "[per-run] --input <CSV>             sample sheet to supply sex (else inferred 'U')",
+            "[optional] thresholds: --min_mean_target_depth/--min_on_target/--max_dup_rate/…",
         ],
         "outputs": "stage5_qc_gate/qc_scorecard.tsv + qc_pass.txt/qc_quarantine.txt + "
                    "coverage_report.md (on_target/coverage_uniformity/per_gene_depth/cumulative/scorecard)",
@@ -169,14 +286,14 @@ STAGES = {
     "call": {
         "desc": "QC-PASS BAM(s) -> joint hard-filtered VCF (GATK, or --caller deepvariant)",
         "required": [
-            "--input_bams <glob|csv>   QC-PASS BAM(s) with .bai (call does NOT re-run the",
-            "                          QC gate — run `callforge coverage` first and pass the pass BAMs)",
-            "--genome_fasta <FASTA>    reference",
-            "--target_bed <BED>        panel BED",
+            "[per-run] --input_bams <glob|csv>   QC-PASS BAM(s) with .bai (call does NOT re-run the",
+            "                                    QC gate — run `callforge coverage` first, pass the pass BAMs)",
+            "[site]    --genome_fasta <FASTA>    reference",
+            "[site]    --target_bed <BED>        panel BED",
         ],
         "optional": [
-            "--caller deepvariant      DeepVariant + GLnexus (default: gatk)",
-            "--joint_method <m>        genomicsdb | combinegvcfs",
+            "[optional]        --caller deepvariant   DeepVariant + GLnexus (default: gatk)",
+            "[optional]        --joint_method <m>     genomicsdb | combinegvcfs (default: genomicsdb)",
         ],
         "outputs": "stage7_filter/joint.filtered.vcf.gz + call_report.md "
                    "(variants_per_sample, titv, het_hom, qual_dist, filter_*)",
@@ -184,13 +301,13 @@ STAGES = {
     "cnv": {
         "desc": "BAM(s) -> CNVkit calls, labelled by CaptureForge callability",
         "required": [
-            "--input_bams <glob|csv>   BAM(s) with .bai (PoN pooled from these)",
-            "--genome_fasta <FASTA>    reference",
-            "--target_bed <BED>        panel BED",
+            "[per-run] --input_bams <glob|csv>   BAM(s) with .bai (PoN pooled from these)",
+            "[site]    --genome_fasta <FASTA>    reference",
+            "[site]    --target_bed <BED>        panel BED",
         ],
         "optional": [
-            "CaptureForge callability via --cf_metrics_json / --captureforge_dir",
-            "--cnv_method / --cnv_segment_method   (only --cnv_caller cnvkit is implemented)",
+            "[optional] CaptureForge callability via --cf_metrics_json / --captureforge_dir",
+            "[optional] --cnv_method / --cnv_segment_method   (only --cnv_caller cnvkit is implemented)",
         ],
         "outputs": "stage8_cnv/cnv_calls.tsv (each call stamped callable | "
                    "breakpoint_blind_low_confidence) + cnv_report.md",
@@ -198,13 +315,13 @@ STAGES = {
     "str": {
         "desc": "BAM(s) -> ExpansionHunter genotypes on the CaptureForge STR catalog",
         "required": [
-            "--input_bams <glob|csv>   BAM(s) with .bai",
-            "--genome_fasta <FASTA>    reference",
-            "--target_bed <BED>        panel BED",
+            "[per-run] --input_bams <glob|csv>   BAM(s) with .bai",
+            "[site]    --genome_fasta <FASTA>    reference",
+            "[site]    --target_bed <BED>        panel BED",
         ],
         "optional": [
-            "--str_catalog <JSON>      CaptureForge STR catalog (else built from the",
-            "                          CaptureForge STR loci in gene_metadata)",
+            "[optional] --str_catalog <JSON>     CaptureForge STR catalog (else built from the",
+            "                                    CaptureForge STR loci in gene_metadata)",
         ],
         "outputs": "stage9_str/str_calls.tsv + str_report.md "
                    "(str_allele_sizes, str_call_rate, str_read_support)",
@@ -212,65 +329,65 @@ STAGES = {
     "paralog": {
         "desc": "VCF -> paralog-aware flagging (INFO/PARALOG_GENE, PARALOG_CONF)",
         "required": [
-            "--input_vcf <VCF.gz>      callset VCF (with .tbi); uses its own MQ, not BAMs",
-            "--target_bed <BED>        panel BED (CaptureForge paralog regions via metadata)",
+            "[per-run] --input_vcf <VCF.gz>      callset VCF (with .tbi); uses its own MQ, not BAMs",
+            "[site]    --target_bed <BED>        panel BED (CaptureForge paralog regions via metadata)",
         ],
-        "optional": ["--paralog_min_mq <int>    MQ below which a paralog-region call is flagged"],
+        "optional": ["[optional] --paralog_min_mq <int>   MQ below which a paralog-region call is flagged (default 50)"],
         "outputs": "stage10_paralog/paralog.annotated.vcf.gz (INFO/PARALOG_GENE + "
                    "PARALOG_CONF) + paralog_report.md",
     },
     "anno": {
         "desc": "re-annotate a VCF (VEP + vcfanno DBs + PhyloP), e.g. after a DB update",
         "required": [
-            "--input_vcf <VCF.gz>      paralog-flagged or filtered VCF (with .tbi)",
-            "--genome_fasta <FASTA>    no-alt primary assembly (reference)",
-            "--target_bed <BED>        panel BED (reference invariant + DB scope gate)",
+            "[per-run] --input_vcf <VCF.gz>      paralog-flagged or filtered VCF (with .tbi)",
+            "[site]    --genome_fasta <FASTA>    no-alt primary assembly (reference)",
+            "[site]    --target_bed <BED>        panel BED (reference invariant + DB scope gate)",
         ],
         "optional": [
-            "--vcfanno_toml <TOML>     bring-your-own vcfanno databases",
-            "--species <name>          VEP species (default homo_sapiens)",
-            "annotation DBs are discovered from --resource_dirs / manifest",
+            "[site]     --vcfanno_toml <TOML>    bring-your-own vcfanno databases",
+            "[optional] --species <name>         VEP species (default homo_sapiens)",
+            "[site]     annotation DBs are discovered from --resource_dirs / manifest",
         ],
         "outputs": "stage11_annotation/annotated.vcf.gz + variants.flat.tsv + anno_report.md",
     },
     "cohortqc": {
         "desc": "somalier relatedness/sex (off-target X/Y backstop) + ancestry PCA + missingness",
         "required": [
-            "--input_bams <glob|csv>   BAM(s) with .bai (somalier extract / sex)",
-            "--input_vcf <VCF.gz>      joint VCF (missingness + ancestry PCA)",
-            "--genome_fasta <FASTA>    reference",
-            "--somalier_sites <VCF.gz> somalier sites (+ .tbi)",
-            "--input <CSV>             sample sheet (declared sex)",
+            "[per-run] --input_bams <glob|csv>   BAM(s) with .bai (somalier extract / sex)",
+            "[per-run] --input_vcf <VCF.gz>      joint VCF (missingness + ancestry PCA)",
+            "[site]    --genome_fasta <FASTA>    reference",
+            "[site]    --somalier_sites <VCF.gz> somalier sites (+ .tbi)",
+            "[per-run] --input <CSV>             sample sheet (declared sex)",
         ],
-        "optional": ["(ancestry PCs feed `callforge burden --cohort_qc_json cohort_qc.json`)"],
+        "optional": ["[optional] (ancestry PCs feed `callforge burden --cohort_qc_json cohort_qc.json`)"],
         "outputs": "stage12_cohortqc/cohort_qc.json + cohortqc_report.md "
                    "(relatedness_heatmap, ancestry_pca, cohort_sex_check, missingness)",
     },
     "giab": {
         "desc": "hap.py precision/recall/F1 vs GIAB truth, restricted to the panel BED (on-target)",
         "required": [
-            "--input_vcf <VCF.gz>      joint callset VCF (with .tbi)",
-            "--giab_control_id <id>    control sample_id in the VCF to benchmark",
-            "--giab_truth_vcf <VCF.gz> GIAB truth (+ .tbi); --giab_truth_bed <BED>",
-            "--target_bed <BED>        panel BED (on-target restriction, hap.py -T)",
-            "--genome_fasta <FASTA>    reference",
+            "[per-run] --input_vcf <VCF.gz>      joint callset VCF (with .tbi)",
+            "[per-run] --giab_control_id <id>    control sample_id in the VCF to benchmark",
+            "[site]    --giab_truth_vcf <VCF.gz> GIAB truth (+ .tbi); --giab_truth_bed <BED>",
+            "[site]    --target_bed <BED>        panel BED (on-target restriction, hap.py -T)",
+            "[site]    --genome_fasta <FASTA>    reference",
         ],
-        "optional": ["(on-target restriction is recorded in happy.runinfo.json)"],
+        "optional": ["[optional] (on-target restriction is recorded in happy.runinfo.json)"],
         "outputs": "stage13_giab/happy.summary.csv + happy.runinfo.json + giab_report.md "
                    "(giab_precision_recall, giab_f1)",
     },
     "burden": {
         "desc": "re-run rare-variant burden with new thresholds/engine on an annotated VCF",
         "required": [
-            "--input_vcf <VCF.gz>      annotated VCF (with .tbi)",
-            "--input <CSV>             sample sheet with phenotype + covariate_* columns",
-            "--target_bed <BED>        panel BED (CaptureForge burden groups via metadata)",
+            "[per-run] --input_vcf <VCF.gz>      annotated VCF (with .tbi)",
+            "[per-run] --input <CSV>             sample sheet with phenotype + covariate_* columns",
+            "[site]    --target_bed <BED>        panel BED (CaptureForge burden groups via metadata)",
         ],
         "optional": [
-            "--burden_engine <e>       collapse | regenie | skat",
-            "--burden_af_max <f>       rare-AF threshold (default 0.01)",
-            "--burden_csq <list>       qualifying consequences",
-            "--cohort_qc_json <JSON>   ancestry PCs (else none; PC-stability gate applies)",
+            "[optional]        --burden_engine <e>   collapse | regenie | skat (default: regenie)",
+            "[optional]        --burden_af_max <f>   rare-AF threshold (default 0.01)",
+            "[optional]        --burden_csq <list>   qualifying consequences",
+            "[stage-dependent] --cohort_qc_json <JSON>  ancestry PCs (else none; PC-stability gate applies)",
         ],
         "outputs": "stage14_burden/burden_results.tsv + burden_report.md",
     },
@@ -280,16 +397,25 @@ STAGES = {
 def _stage_help(stage):
     s = STAGES[stage]
     lines = [f"callforge {stage} — {s['desc']}", "",
-             f"usage: callforge {stage} [--print-cmd] [--pipeline PATH] <inputs> "
+             f"usage: callforge {stage} [--print-cmd] [--in-place] [--pipeline PATH] <inputs> "
              f"[-profile …] [-params-file …] [-resume]", "",
-             "Runs `nextflow run main.nf --stage %s …`, reusing the same module as the "
-             "full pipeline." % stage, "",
+             "Runs `nextflow run main.nf --stage %s …`, reusing the SAME module as the "
+             "full pipeline (no logic is reimplemented). Output goes to a fresh, "
+             "non-destructive results/standalone/%s_<timestamp>/ unless you pass --outdir "
+             "or --in-place." % (stage, stage), "",
+             "Provenance: [per-run]=a data file for THIS run · [site]=a cluster reference "
+             "set once (often in -params-file) · [optional]=defaulted override · "
+             "[stage-dependent]=only for that engine/branch.", "",
              "required input files:"]
     lines += [f"  {r}" for r in s["required"]]
     lines += ["", "optional:"]
     lines += [f"  {o}" for o in s["optional"]]
-    lines += ["", f"key outputs: {s['outputs']}",
-              "", "Any other flag is passed straight to Nextflow."]
+    lines += ["", f"key outputs: {s['outputs']}", "",
+              "Typical (refs/queue/image from the params file):",
+              f"  callforge {stage} <inputs> -profile hpc_slurm,singularity -params-file site.params.yaml",
+              "", "Any other flag (-profile, -params-file, -resume, --<param>) is passed "
+              "straight to Nextflow. See `callforge run --help` for the full parameter "
+              "reference with provenance."]
     return "\n".join(lines)
 
 

@@ -17,10 +17,20 @@ From: mambaorg/micromamba:1.5.8
     echo 'export PATH=/opt/conda/bin:$PATH' >> $SINGULARITY_ENVIRONMENT
 
 %environment
+    # Tools install into BASE conda (/opt/conda) via `micromamba install -n base`
+    # in %post — put its bin FIRST so `singularity exec <img> samtools` resolves by
+    # bare name and does not depend on the host PATH leaking in.
     export PATH=/opt/conda/bin:$PATH
-    export LC_ALL=C
+    # UTF-8 locale silences locale warnings from the bioinformatics CLIs (a bare
+    # LC_ALL=C makes some tools choke on non-ASCII; C.UTF-8 is the safe default).
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+    # Container FS is read-only at run time; give matplotlib a writable cache dir
+    # (the QC/plot layer is heavy — otherwise it warns about a read-only /root/.config).
+    export MPLCONFIGDIR=/tmp/matplotlib
 
 %test
+    ps --version | head -1          # procps — REQUIRED by Nextflow task metric collection
     samtools --version | head -1
     bcftools --version | head -1
     bwa-mem2 version 2>&1 | head -1
@@ -36,4 +46,5 @@ From: mambaorg/micromamba:1.5.8
 %help
     CallForge targeted-capture germline analysis pipeline (core env).
     Run via Nextflow:
-      nextflow run main.nf -profile hpc_slurm,apptainer -params-file params.yaml
+      nextflow run main.nf -profile hpc_slurm,apptainer   -params-file params.yaml
+                      (or -profile hpc_slurm,singularity on a SingularityCE site — same .sif)

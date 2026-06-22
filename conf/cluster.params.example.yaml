@@ -1,0 +1,85 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  CallForge — cluster params-file TEMPLATE (copy and edit per site)
+#
+#  This is the file a deployed user copies once and edits. With the site env
+#  sourced (share/callforge-env.sh), a full run is just:
+#
+#      callforge-run -params-file /path/site.params.yaml --input samplesheet.csv --outdir results
+#
+#  Every value carrying a path is an EXAMPLE — the "/hpc/..." form is one site's
+#  layout. Replace with your own. Stage references per docs/hpc_deployment.md.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ---- Reference genome (the SAME no-alt primary assembly CaptureForge designed against) ----
+# CallForge enforces no-alt + BED/reference build match (check_reference_invariant.py,
+# exit 2 on mismatch), and that the target BED's contig-naming style (chr-prefix vs not)
+# agrees with the reference. Use the same FASTA you align and call against.
+genome_build:   GRCh38
+genome_fasta:   /hpc/refs/callforge/GRCh38/GRCh38_noalt_primary.fa        # [EDIT]
+species:        homo_sapiens
+
+# ---- Target BED + CaptureForge handoff -------------------------------------
+# target_bed is REQUIRED (a CaptureForge final_covered_targets.bed, or any panel BED).
+# captureforge_dir is OPTIONAL enrichment (CNV callability / STR loci / paralog / burden
+# groups); without it, supply --gene_metadata from `callforge metadata` instead.
+target_bed:        /hpc/refs/callforge/GRCh38/final_covered_targets.bed   # [EDIT — REQUIRED]
+# captureforge_dir: /hpc/projects/myrun/captureforge/results/run1         # [EDIT/optional]
+# gene_metadata:    /hpc/refs/callforge/GRCh38/gene_metadata.tsv          # [EDIT/optional — if no CaptureForge]
+# paralog_genes:    "CD209,CASP1,CR1,HP,CFH"                              # [optional]
+
+# ---- Annotation resources (Stage 0 discovers from resource_dirs, or set explicitly) ----
+# These are referenced IN PLACE → if outside $HOME/CWD, cover their root with bind_paths.
+resource_dirs:  "/hpc/refs/callforge/annotation_db,/hpc/refs/callforge/GRCh38"   # [EDIT]
+allow_download: false                                                     # never fetch mid-run unless opted in
+# Explicit overrides (else discovered):
+# vep_cache:    /hpc/refs/callforge/vep/.vep                              # [EDIT/optional]
+# vep_release:  110
+# gnomad_vcf:   /hpc/refs/callforge/annotation_db/gnomad.afr.vcf.gz       # [EDIT/optional]
+# dbsnp_vcf:    /hpc/refs/callforge/annotation_db/dbsnp.vcf.gz            # [EDIT/optional]
+# clinvar_vcf:  /hpc/refs/callforge/annotation_db/clinvar.vcf.gz          # [EDIT/optional]
+# phylop_bw:    /hpc/refs/callforge/annotation_db/phyloP.bw              # [EDIT/optional]
+# known_sites:  "/hpc/refs/.../dbsnp.vcf.gz,/hpc/refs/.../Mills.vcf.gz"   # [EDIT/optional — BQSR]
+
+# ---- Container image (REQUIRED with any engine) ----------------------------
+# The .sif every task runs inside (built from env/callforge.def). The run fails loudly
+# if an engine is enabled and this is empty. The callforge-run wrapper fills this from
+# CALLFORGE_SIF, so you can usually omit it here. (VEP/hap.py/DeepVariant pin their own
+# official images and are unaffected.)
+container_image: /hpc/opt/callforge/callforge.sif                         # [EDIT or rely on wrapper]
+
+# ---- Container bind for referenced-in-place refs ---------------------------
+# Singularity/Apptainer auto-mount only $HOME, /tmp, CWD. Bind the root that holds the
+# genome / annotation DBs / VEP cache so tasks can read them. The wrapper sets this from
+# CALLFORGE_BIND (and exports SINGULARITY_BIND/APPTAINER_BIND); set it here too if you
+# run nextflow directly. Comma-separate multiple roots.
+bind_paths: /hpc                                                          # [EDIT or omit if using wrapper]
+
+# ---- SLURM -----------------------------------------------------------------
+# slurm_partition is REQUIRED for SLURM runs — there is NO safe default (clusters differ:
+# global, compute, batch, normal, …). The run fails loudly if it is unset. Find yours
+# with: sinfo -s. `global` below is only an EXAMPLE — replace it. Override per-run with
+# --slurm_partition <queue>. slurm_account / slurm_queue_opts → extra sbatch options.
+slurm_partition: global                                                   # [EDIT — REQUIRED] your partition (sinfo -s)
+slurm_account:   ''                                                       # [EDIT/optional] e.g. mylab
+slurm_queue_opts: ''                                                      # [EDIT/optional] extra clusterOptions
+# scratch_dir: /tmp                                                       # [optional] per-task scratch (Lustre/GPFS recommended)
+
+# ---- Calling / analysis (sane defaults; tune as needed) --------------------
+caller:        gatk            # gatk | deepvariant
+joint_method:  genomicsdb      # genomicsdb | combinegvcfs
+cnv_caller:    cnvkit
+burden_engine: regenie         # regenie | skat | collapse
+burden_af_max: 0.01
+n_ancestry_pcs: 4
+
+# ---- GIAB validation (optional but recommended) ----------------------------
+# giab_control_id: HG002
+# giab_truth_vcf:  /hpc/refs/callforge/giab/HG002_GRCh38_v4.2.1.vcf.gz     # [EDIT/optional]
+# giab_truth_bed:  /hpc/refs/callforge/giab/HG002_GRCh38_v4.2.1.bed        # [EDIT/optional]
+# somalier_sites:  /hpc/refs/callforge/GRCh38/somalier.sites.vcf.gz        # [EDIT/optional — cohortqc]
+
+# ---- Output ----------------------------------------------------------------
+# panel_name and outdir are commonly passed on the CLI per run, e.g.
+#   callforge-run -params-file site.params.yaml --input samplesheet.csv --outdir results
+panel_name: callforge_panel
+outdir:     results
