@@ -96,7 +96,42 @@ if [[ -x "${CALLFORGE_HOME}/.tools/nextflow" ]]; then
   NF="${CALLFORGE_HOME}/.tools/nextflow"
 fi
 
-echo "[callforge-run] ${NF} run ${CALLFORGE_HOME}/main.nf -profile ${PROFILE} ${extra[*]:-} $*" >&2
-exec "$NF" run "${CALLFORGE_HOME}/main.nf" \
+# --- run state goes to a USER-WRITABLE dir, NEVER the read-only shared install ----
+# Nextflow anchors its run state to launchDir == the process working directory:
+# .nextflow/ (history, history.lock, cache) and the .nextflow.log live there, and
+# -work-dir relocates ONLY work/ — not those. So we must launch from a writable
+# place. We do NOT `cd` into the install (main.nf is referenced by absolute path),
+# and we point the log + work dir + the launcher's own scratch (NXF_HOME/capsule)
+# at user space too (belt-and-suspenders, in case launchDir alone isn't honored).
+RUNDIR="${CALLFORGE_RUNDIR:-$PWD}"
+if ! ( : > "${RUNDIR}/.callforge-wtest.$$" ) 2>/dev/null; then
+  echo "[callforge-run] ERROR: run directory is not writable: ${RUNDIR}" >&2
+  echo "  CallForge writes run state (.nextflow/, logs, work/) to this directory." >&2
+  echo "  Run from a writable directory (your home or a project dir), e.g.:" >&2
+  echo "    cd ~ && callforge-run -params-file site.params.yaml --input samplesheet.csv --outdir results" >&2
+  echo "  (or set CALLFORGE_RUNDIR=/path/to/writable to override)." >&2
+  exit 1
+fi
+rm -f "${RUNDIR}/.callforge-wtest.$$"
+
+# The launcher itself (capsule cache, framework, tmp) must be writable for a
+# read-only install — never let it try to write next to itself in the repo.
+export NXF_HOME="${NXF_HOME:-$HOME/.nextflow}"
+
+# Pin the log (core option, BEFORE `run`) and work dir (run option) into the run
+# dir unless the caller already set them (or NXF_WORK is exported).
+pre=(); post=()
+_have_log=0; _have_work=0
+for _a in "$@"; do
+  case "$_a" in
+    -log|-log=*)            _have_log=1 ;;
+    -work-dir|-w|-work-dir=*) _have_work=1 ;;
+  esac
+done
+[[ $_have_log -eq 0 ]] && pre+=("-log" "${RUNDIR}/.nextflow.log")
+[[ $_have_work -eq 0 && -z "${NXF_WORK:-}" ]] && post+=("-work-dir" "${RUNDIR}/work")
+
+echo "[callforge-run] ${NF} ${pre[*]:-} run ${CALLFORGE_HOME}/main.nf -profile ${PROFILE} ${post[*]:-} ${extra[*]:-} $*" >&2
+exec "$NF" ${pre[@]+"${pre[@]}"} run "${CALLFORGE_HOME}/main.nf" \
     -profile "${PROFILE}" \
-    ${extra[@]+"${extra[@]}"} "$@"
+    ${post[@]+"${post[@]}"} ${extra[@]+"${extra[@]}"} "$@"
