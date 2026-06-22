@@ -50,7 +50,7 @@ arrives. Folded into the §11 completion report.
 
 ## Deferred validations (do before production use)
 - **DeepVariant + GLnexus** (Stage 6 alt): wired but untested (container-only). Run a
-  one-time native-Apptainer smoke-test at HPC deployment.
+  one-time native Singularity/Apptainer smoke-test at HPC deployment.
 - **regenie** (Stage 14, production default) and **SKAT-O / STAAR** (Stage 14 R alt):
   wired but NEVER executed (the synthetic cohort is too small). Exercise both on a
   real/realistic cohort before production use. The tested engine is `collapse`
