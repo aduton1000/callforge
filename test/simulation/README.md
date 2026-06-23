@@ -1,27 +1,38 @@
-# CallForge cohort simulation harness
+# CallForge cohort simulation harness — REAL-reference validation
 
-A self-contained, deterministic **16-sample synthetic cohort** with **planted ground
-truth across every class the pipeline calls**, used to validate the full 16-stage
-CallForge pipeline END-TO-END on the cluster for **correctness** — did each stage detect
-what we planted? — not merely "did it run."
+A deterministic **16-sample cohort** with **planted ground truth across every class the
+pipeline calls**, used to validate the full 16-stage CallForge pipeline END-TO-END on the
+cluster **against the REAL GRCh38 no-alt reference and the REAL annotation databases** —
+nothing faked. "Green" here means **CallForge works against real references on the
+cluster**, which is what de-risks the real cohort.
 
-It emits a synthetic reference + per-sample FASTQs + sample sheet + phenotype/covariates
-+ a machine-readable **truth manifest**, and ships a **checker** that asserts each stage's
-output against that manifest.
+Reads are simulated **from the real reference at the genes' real coordinates** with a real
+Illumina-error-model simulator (**dwgsim**); planted variants sit at real exonic positions
+whose consequence is **verified against the real gene model**; and the pipeline runs against
+**real** VEP/gnomAD-AFR/dbSNP/ClinVar/PhyloP/somalier references.
 
 > ### Honest scope note — read this first
-> Simulated reads validate the pipeline **plumbing** and **planted-signal recovery**: that
-> reads flow through all 16 stages and that the variants we deliberately inserted are
-> recovered with the right class/consequence/genotype. They are **NOT** a substitute for
-> real-data calibration or formal GIAB precision/recall, which require a real GIAB sample
-> and real genomic backgrounds. "16 stages green on the sim" means **the wiring is correct
-> and planted signals surface** — it does **not** mean the panel is clinically validated.
-> The mini-genome is synthetic: contigs carry Ensembl chromosome **labels** (`1,2,…,X`) but
-> the sequence and coordinates are fabricated, not real genomic positions.
+> Simulated reads validate that CallForge runs correctly **against real references** and
+> recovers **planted** signals at real coordinates. They are **NOT** a substitute for
+> real-data calibration or formal GIAB precision/recall (which need a real GIAB sample and
+> real genomic backgrounds). GIAB benchmarking applies to the **real** cohort, not this sim
+> (the sim has no real GIAB sample) — so the sim checker does **not** include a GIAB stage,
+> while `bin/fetch_annotation_refs.sh` still stages HG002 truth for the real run.
 
-This fixture is a **separate, cluster-run** test asset. It is **not** wired into any
-Mac/offline CI (it needs the `.sif` + a Nextflow run). It is distinct from the small
-`conf/test.config` fixture (`bin/make_test_reference.py`), which is a 4-sample smoke test.
+This is a **separate, cluster-run** asset (read-sim + pipeline run happen on the cluster).
+It is **not** wired into any Mac/offline CI. It is distinct from the small `conf/test.config`
+fixture (`bin/make_test_reference.py`), which is a 4-sample hermetic smoke test.
+
+---
+
+## What changed from the mini-genome version (commit 9565e12)
+
+**Rebased onto real GRCh38** (kept the good parts): the cohort design, the planted-variant
+matrix, the truth-manifest schema, the checkers + named thresholds, and the generic gene
+set (TP53, EGFR, BRCA1, PTEN, KRAS, APC, MLH1, RB1, BRCA2, MYC, HTT, NF1 — no panel genes).
+**Removed the fakes**: no synthetic mini-genome, no hand-rolled Python read emission, no
+faked gnomAD/VEP/GIAB. Reads now come from the real FASTA via **dwgsim**; consequences are
+verified against the real CDS; the pipeline runs against the real staged DBs.
 
 ---
 
@@ -29,144 +40,154 @@ Mac/offline CI (it needs the `.sif` + a Nextflow run). It is distinct from the s
 
 | File | Runs where | Purpose |
 |------|-----------|---------|
-| `cohort_design.py` | imported | **Single source of truth**: gene set, planted variants, sample×feature matrix, case/control + covariates, checker thresholds. |
-| `simulate_cohort.py` | host (stdlib only) | Writes the reviewable **plan** + `samplesheet.csv` (no genome/simulator needed). |
-| `build_fixture.py` | in-container (needs htslib) | Builds the mini-genome, plants variants, emits reads (het balance, CNV depth modulation, STR expansion), writes the **resolved `truth_manifest.json`**. |
-| `generate_reads.sh` | cluster | Wrapper: runs the plan on the host + `build_fixture.py` inside the `.sif`. |
-| `check_against_truth.py` | cluster (after the run) | Asserts each stage's results against the manifest; PASS/FAIL per stage + overall. |
+| `cohort_design.py` | imported | **Single source of truth**: gene set + REAL GRCh38 coords, planted matrix, samples/covariates, thresholds, per-stage ref map. |
+| `simulate_cohort.py` | host (stdlib) | Reviewable plan + `samplesheet.csv` + manifest **skeleton** (no genome needed). |
+| `resolve_variants.py` | in-`.sif` | Places each variant at a **real** exonic/upstream position, **verifies the consequence against the real CDS**, checks mappability + novelty; writes the **resolved** `truth_manifest.json` + real-coord `targets.bed` + real HTT `str_catalog.json` + `gene_metadata.tsv`. Needs FASTA + GTF (+ optional known-VCF). |
+| `simulate_reads.py` | in-`.sif` | **dwgsim** reads from the real reference: het haplotypes, CNV depth modulation, expanded HTT repeat, real X/Y off-target for sex. |
+| `generate_reads.sh` | cluster | Wrapper: host plan, then resolve + simulate inside the `.sif`; writes `sim.params.yaml`. |
+| `check_against_truth.py` | cluster | **Staged** PASS/FAIL vs the manifest (`--stages` / `--through`; SKIP-if-ref-absent). |
+
+`bin/fetch_annotation_refs.sh` (repo `bin/`) stages the real DBs (resumable + verified).
+
+---
+
+## Real-reference dependency map (what each stage's CHECK needs)
+
+| Stage check | `--through` | Needs staged |
+|-------------|:-----------:|--------------|
+| calling (6/7) | 7 | **genome only** (+ .dict/.bwa-mem2 index built on the cluster) |
+| CNV (8) | 8 | genome only |
+| STR (9) | 9 | genome + the STR catalog this harness provides |
+| annotation (11) | 11 | **VEP cache** + **PhyloP** |
+| cohort QC (12) | 12 | **somalier sites** |
+| burden (14) | 14 | **gnomAD-AFR** (rarity) + VEP (qualifying consequence) |
+
+The **spine** (`--through 9`: calling/cnv/str) needs **only the genome**, so it is validated
+**before** the heavy annotation DBs finish downloading. Read GENERATION additionally needs a
+gene-model **GTF** (small, ~50 MB) to place variants at real coords with verified
+consequences — this is separate from the heavy annotation DBs.
 
 ---
 
 ## How to run on the cluster
 
 ```bash
-# 0) clone/pull the repo on the cluster, cd into it. Choose a WRITABLE fixture dir
-#    (scratch/project space — NOT the read-only install).
+# 0) on the cluster, build the genome .dict + bwa-mem2 index once (standard CallForge prep).
+#    Pick a WRITABLE fixture dir (scratch/project — NOT the read-only install).
+
+# 1) generate the fixture: resolve real-coord variants + simulate reads (both in the .sif)
 cd test/simulation
+CALLFORGE_SIF=/path/callforge.sif ./generate_reads.sh \
+    /scratch/$USER/cf_sim \
+    /refs/GRCh38_noalt.clean.fa \
+    /refs/Homo_sapiens.GRCh38.110.gtf.gz \
+    singularity \
+    /refs/gnomad.afr.sites.vcf.gz        # optional 5th arg -> novelty/collision checks
 
-# 1) generate the fixture (reference + reads + truth manifest), in-container:
-CALLFORGE_SIF=/path/to/callforge.sif ./generate_reads.sh /scratch/$USER/cf_sim singularity
-
-# 2) fill the two FILL_ME params (container_image, slurm_partition) in the generated
-#    /scratch/$USER/cf_sim/sim.params.yaml, then run the FULL pipeline from a writable dir:
+# 2) run + check the SPINE first (genome only — before annotation DBs are staged):
 cd /scratch/$USER/cf_sim
-callforge-run -params-file sim.params.yaml -profile hpc_slurm,singularity
-
-# 3) check the results against the planted truth:
+callforge-run -params-file sim.params.yaml -profile hpc_slurm,singularity   # spine stages
 python3 <repo>/test/simulation/check_against_truth.py \
-    --manifest /scratch/$USER/cf_sim/truth_manifest.json \
-    --results  /scratch/$USER/cf_sim/results
+    --manifest truth_manifest.json --results results --through 9
+
+# 3) stage the annotation/burden/cohortqc DBs (resumable + verified), then fill the
+#    commented params in sim.params.yaml and re-run those stages:
+OUTDIR=/refs/callforge <repo>/bin/fetch_annotation_refs.sh
+callforge-run -params-file sim.params.yaml -profile hpc_slurm,singularity   # later stages
+python3 <repo>/test/simulation/check_against_truth.py \
+    --manifest truth_manifest.json --results results            # all stages
 ```
 
-The generator is hermetic (pure-Python read emission; only htslib is required), so it can
-also be built on a workstation with `samtools/bgzip/tabix` for inspection — only the
-Nextflow run itself needs the cluster + `.sif`. Write the fixture **outside** the repo
-(scratch) so generated reads/results are never committed.
+`dwgsim` must be in the `.sif` — it was added to `env/callforge.yml`, so **rebuild the
+image** (`apptainer build callforge.sif env/callforge.def`) before step 1.
 
 ---
 
-## The gene set (generic, non-panel) and why each was chosen
+## How planted variants are placed at real coordinates
 
-Well-known cancer/Mendelian **illustrative** genes (plus `HTT` for the STR locus). **None
-is a malaria-panel gene.** Each gene is assigned its real chromosome (for plausible
-Ensembl naming) but laid out at synthetic local coordinates.
+`resolve_variants.py` (in-container, with the real FASTA + GTF):
 
-| Gene | Chrom | Role in the sim |
-|------|-------|-----------------|
-| `TP53`  | 17 | coding **stop-gain** (calling + annotation showcase) |
-| `EGFR`  | 7  | coding **missense** |
-| `BRCA1` | 17 | coding **frameshift** (1-bp deletion) |
-| `PTEN`  | 10 | coding **stop-gain** |
-| `KRAS`  | 12 | coding **missense** |
-| `APC`   | 5  | **burden gene** (rare coding variants enriched in cases) **+ promoter** SNV |
-| `MLH1`  | 3  | **promoter / regulatory** SNV (upstream of TSS) |
-| `RB1`   | 13 | **CNV deletion** target |
-| `BRCA2` | 13 | **CNV deletion** target |
-| `MYC`   | 8  | **CNV duplication** target |
-| `HTT`   | 4  | **STR** `(CAG)n` expansion locus (textbook tandem repeat; added explicitly as the STR test) |
-| `NF1`   | 17 | **negative control** gene (no planted variant) |
+1. Looks up each gene's chosen transcript in the **real gene model** (MANE/canonical from
+   `cohort_design.GENES`, else the longest-CDS transcript) and builds the **spliced CDS**
+   from the real FASTA, strand-aware.
+2. For each planted coding variant, **scans real codons** for a single-base change that
+   produces the intended consequence and **verifies it by translating the real CDS**: a
+   `stop_gained` must actually create a stop at that real position; a `missense_variant`
+   must change the amino acid (not synonymous, not stop); a `frameshift_variant` is a 1-bp
+   exonic indel. Forward-strand ref/alt are read back from the FASTA and checked.
+3. **Mappability**: rejects soft-masked/N/low-complexity (homopolymer) context.
+   **Novelty/collision**: with an optional gnomAD/dbSNP VCF, rejects positions carrying a
+   known variant, so planted variants read as **novel → rare → burden-qualifying** and
+   don't confound the annotation/burden checks.
+4. Promoter variants are placed ~900 bp upstream of the real TSS (strand-aware) →
+   `upstream_gene_variant`. The **HTT** CAG tract motif is validated against the real FASTA
+   at the standard GRCh38 locus.
 
-The set deliberately spans all classes: coding SNV/indel (stop/missense/frameshift),
-promoter/regulatory, STR expansion, CNV del/dup, and a case/control burden signal. `HTT`
-is added as the STR locus because none of the cancer genes carries a canonical disease STR.
+Exact resolved positions/ref/alt/consequence are written into `truth_manifest.json` (the
+checker's spec) and echoed at the end of the resolve step for review.
 
-### Planted-variant matrix (summary)
+### STR detectability (short reads)
 
-16 samples `S01..S16`; **cases = S01–S08**, **controls = S09–S16**. All planted small
-variants are **heterozygous**. Carriers (see `cohort_plan.tsv` / `truth_manifest.tsv` for
-the full matrix):
+HTT is planted at `(CAG)18 → (CAG)45`. A 45-unit tract (135 bp) is near the 150 bp read
+length, so ExpansionHunter reliably detects the **presence** of the expansion via
+flanking/in-repeat reads but sizes it noisily. The checker therefore requires the carrier's
+larger allele to be **detectably expanded vs normal** (`STR_EXPANSION_MIN_DELTA_UNITS`), with
+a **wide** size tolerance (`STR_LEN_TOL_UNITS`) — not an exact length.
 
-- **Coding showcase:** TP53 stop (S01,S05,S12), EGFR missense (S02,S07,S10), BRCA1
-  frameshift (S03,S09,S14), PTEN stop (S04,S11), KRAS missense (S06,S13,S16).
-- **Promoter:** APC (S01,S08), MLH1 (S05,S15) → `upstream_gene_variant`.
-- **STR:** HTT `(CAG)18 → (CAG)45` expanded in S02,S04,S06,S08; normal elsewhere.
-- **CNV:** RB1 DEL (S03,S07), BRCA2 DEL (S10,S13), MYC DUP (S05,S12) — via per-sample
-  read-**depth** modulation over the region (CNVkit is depth/PoN based).
-- **Burden:** 6 distinct rare APC coding variants concentrated in cases (S01–S07) with a
-  single control (S09) for realism → APC is the most case-enriched gene.
+### Sex / cohort QC
+
+The gene panel is autosomal, so — like a real targeted panel — sex is inferred from
+**real X/Y off-target reads**: small real X and (male-specific) Y windows are simulated at
+ploidy-scaled depth (F: 2× X, 0 Y; M: 1× X, 1× Y) so somalier infers sex from **real
+reference coverage**, not a synthetic contig.
 
 ---
 
-## Truth manifest schema (`truth_manifest.json`)
-
-Resolved by `build_fixture.py` (exact coords/ref/alt depend on the generated sequence):
+## Truth manifest schema (`truth_manifest.json`, resolved)
 
 ```
-seed, genome_fasta, target_bed, gtf, gene_metadata, str_catalog, somalier_sites,
-gnomad_vcf, contigs:{name:length}, samples:[{sample_id,phenotype,sex,covariate_*,batch}],
-cases:[…], controls:[…],
-coding_variants:[{id,gene,contig,pos(1-based),ref,alt,vartype,consequence,zygosity,carriers}],
+seed, genome_build, genome_fasta, gtf, target_bed, gene_metadata, str_catalog, sex_regions,
+samples:[{sample_id,phenotype,sex,covariate_*,batch}], cases, controls,
+coding_variants:[{id,gene,contig,pos,ref,alt,vartype,consequence,zygosity,carriers}],
 promoter_variants:[{… consequence:"upstream_gene_variant" …}],
-str:{gene,contig,repeat_region,locus_id,motif,normal_units,expanded_units,carriers},
-cnv_events:[{id,gene,contig,start,end,state(DEL|DUP),fold,carriers}],
+str:{gene,contig,repeat_region,locus_id,motif,motif_validated,normal_units,expanded_units,carriers},
+cnv_events:[{id,gene,state(DEL|DUP),fold,carriers}],
 burden:{gene,qualifying_feature_ids,case_carriers,control_carriers},
-cohortqc:{sex_by_sample:{sample:M|F}},
-giab:{control_id,truth_vcf,truth_bed},
-thresholds:{…}
+cohortqc:{sex_by_sample}, stage_refs, thresholds
 ```
 
-A human-readable `truth_manifest.tsv` (class / feature / gene / contig / coord / detail /
-carriers) is written alongside it.
+A human-readable `truth_manifest.tsv` is written alongside.
 
 ---
 
 ## Checker thresholds (named, with rationale)
 
-Defined as `THRESHOLDS` in `cohort_design.py` and carried in the manifest. Tolerances are
-loose where a stage is probabilistic — we assert the planted signal **surfaces**, not exact
-metrics.
+Defined as `THRESHOLDS` in `cohort_design.py` and carried in the manifest.
 
 | Threshold | Value | Rationale |
 |-----------|-------|-----------|
-| `CALLING_MIN_RECALL` | 0.80 | Fraction of planted het coding variants recovered **genotype-aware** (right sample, right ALT). Clearly-callable high-depth sites should mostly be recovered; allow indel/edge misses. |
-| `ANNOTATION_MIN_CSQ_MATCH` | 0.80 | Of recovered coding variants, fraction carrying the **exact** expected VEP consequence (`stop_gained`/`missense_variant`/`frameshift_variant`); promoter → `upstream`/`regulatory`. Annotation is deterministic given a call → set high. |
-| `STR_EXPANSION_MIN_DELTA_UNITS` | 10 | A carrier's larger allele must exceed normal by ≥ this many repeat units to count as a detected expansion. |
-| `STR_LEN_TOL_UNITS` | 12 | Called expanded allele within ± this of the planted length (EH genotyping is noisy on short reads). |
+| `CALLING_MIN_RECALL` | 0.80 | Planted het coding variants recovered genotype-aware by GATK vs real GRCh38. |
+| `ANNOTATION_MIN_CSQ_MATCH` | 0.80 | Recovered variants carrying the exact **real VEP** consequence; promoter → upstream/regulatory. |
+| `STR_EXPANSION_MIN_DELTA_UNITS` | 8 | Carrier's larger allele must exceed normal by ≥ this (presence, not exact size). |
+| `STR_LEN_TOL_UNITS` | 20 | Wide size tolerance — short reads size near/over-read-length repeats noisily. |
 | `STR_MIN_CARRIER_RECALL` | 0.75 | Fraction of STR carriers flagged expanded. |
-| `CNV_MIN_RECALL` | 0.50 | Fraction of planted del/dup events called in the right sample+gene with correct type. CNVkit on a tiny cohort PoN is noisy → loose. |
-| `BURDEN_P_MAX` | 0.05 | Planted burden gene (APC) must rank #1 (smallest p) **or** have p below this. We assert the signal surfaces, not an exact p. |
-| `COHORTQC_SEX_MIN_CONCORDANCE` | 0.90 | somalier-inferred sex vs the sheet (sex is encoded deterministically into X off-target reads). |
-| `COHORTQC_MAX_RELATEDNESS` | 0.25 | Samples are independent → no pair above this. |
+| `CNV_MIN_RECALL` | 0.50 | Planted del/dup called in the right sample+gene+type; CNVkit on a tiny PoN is noisy. |
+| `BURDEN_P_MAX` | 0.05 | Planted burden gene (APC) ranks #1 or p below this. |
+| `COHORTQC_SEX_MIN_CONCORDANCE` | 0.90 | somalier sex (from real X/Y coverage) vs the sheet. |
+| `COHORTQC_MAX_RELATEDNESS` | 0.25 | Independent samples → no pair above this. |
 
-What each stage's check asserts:
-
-- **calling (6/7)** — `joint.filtered.vcf.gz`: ≥ `CALLING_MIN_RECALL` of planted coding
-  variants recovered, genotype-aware (majority of carriers non-ref at the site; indels
-  matched as an indel call within ±30 bp of the locus).
-- **annotation (11)** — `variants.flat.tsv`: planted stop-gain/missense/frameshift carry the
-  expected VEP `consequence`; promoter variants flagged `upstream`/`regulatory`.
-- **STR (9)** — `str_calls.tsv`: carriers show an expanded allele (~45 units ± tol); spurious
-  expansion in non-carriers is reported as a warning.
-- **CNV (8)** — `cnv_calls.tsv`: planted DEL/DUP events called in the right sample+gene with
-  the correct `type`.
-- **burden (14)** — `burden_results.tsv`: the APC unit ranks #1 or p ≤ `BURDEN_P_MAX`.
-- **cohort QC (12)** — `cohort_qc.json`: somalier `sex_inferred` matches the sheet; no
-  pairwise relatedness above the ceiling.
+Run a subset with `--stages calling,cnv,str` or `--through 9`; a stage whose output is
+absent SKIPs with a `needs: <ref>` message (use `--strict` to turn SKIPs into failures).
 
 ---
 
-## Determinism
+## Cluster sequence (summary)
 
-Everything derives from `cohort_design.SEED` via a small fixed LCG (no `hash()` salt, no
-`Math.random`), so re-runs are byte-stable across machines. Change the cohort by editing
-`cohort_design.py` only — the plan, the generated reads, and the checks stay in lock-step.
+1. build genome `.dict` + bwa-mem2 index (cluster);
+2. `generate_reads.sh` → resolve real-coord variants + dwgsim reads from real GRCh38;
+3. run + check the **spine** (`--through 9`, genome only);
+4. `fetch_annotation_refs.sh` (resumable + checksum-verified) → stage VEP/gnomAD-AFR/PhyloP/…;
+5. run + check **annotation / burden / cohort QC**.
+
+Determinism: everything derives from `cohort_design.SEED` (carrier matrix, dwgsim `-z`).
+Edit `cohort_design.py` only — plan, reads, and checks stay in lock-step.

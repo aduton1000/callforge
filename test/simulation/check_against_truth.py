@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
-"""check_against_truth.py — assert CallForge results against the planted truth manifest.
+"""check_against_truth.py — assert CallForge REAL-reference results vs the truth manifest.
 
-Given truth_manifest.json (from build_fixture.py) and a CallForge results/ directory,
-checks each stage for CORRECTNESS (did it recover what we planted?) and prints a
-PASS/FAIL line per stage plus an overall verdict. Thresholds are NAMED constants carried
-in the manifest (see cohort_design.THRESHOLDS) — printed so they are visible and tunable.
+Given the RESOLVED truth_manifest.json (from resolve_variants.py) and a CallForge results/
+directory, checks each stage for CORRECTNESS against the REAL reference (did it recover
+what we planted?) and prints a PASS/FAIL line per stage plus an overall verdict.
 
-Tolerances are deliberately loose where the stage is probabilistic (calling/CNV/STR): we
-assert the planted SIGNAL surfaces, not exact metrics. See README "Checker thresholds".
+STAGED validation: the SPINE (calling/cnv/str) needs ONLY the genome, so it can be checked
+BEFORE the heavy annotation DBs are staged. Annotation/burden/cohortqc need their real DBs.
+Select a subset with `--stages calling,cnv` or `--through 9`; if a stage's output is absent
+(because its required DB was not yet staged, or it hasn't been run) the checker SKIPs it
+with a clear "needs <ref>" message instead of failing.
+
+Thresholds are NAMED constants carried in the manifest (cohort_design.THRESHOLDS).
+Tolerances are loose where a stage is probabilistic (calling/CNV/STR).
 
 Result files consumed (relative to --results):
   stage7_filter/joint.filtered.vcf.gz      calling
-  stage11_annotation/variants.flat.tsv     annotation consequence
-  stage9_str/str_calls.tsv                 STR expansion
   stage8_cnv/cnv_calls.tsv                 CNV del/dup
-  stage14_burden/burden_results.tsv        burden enrichment
+  stage9_str/str_calls.tsv                 STR expansion
+  stage11_annotation/variants.flat.tsv     annotation consequence
   stage12_cohortqc/cohort_qc.json          sex concordance + relatedness
+  stage14_burden/burden_results.tsv        burden enrichment
 
-stdlib-only. Exit code 0 if every (non-skipped) stage passes, else 1.
+stdlib-only. Exit code 0 if every selected, non-skipped stage passes, else 1.
 """
 import argparse
 import csv
@@ -283,52 +288,70 @@ def check_cohortqc(man, results):
     return status, lines
 
 
+# key -> (display name, stage number, check fn). Stage number drives --through; `needs`
+# (the real-reference dependency shown on SKIP) comes from manifest["stage_refs"][key].
 CHECKS = [
-    ("calling (stage 6/7)", check_calling),
-    ("annotation (stage 11)", check_annotation),
-    ("STR (stage 9)", check_str),
-    ("CNV (stage 8)", check_cnv),
-    ("burden (stage 14)", check_burden),
-    ("cohort QC (stage 12)", check_cohortqc),
+    {"key": "calling",    "name": "calling (stage 6/7)",  "num": 7,  "fn": check_calling},
+    {"key": "cnv",        "name": "CNV (stage 8)",        "num": 8,  "fn": check_cnv},
+    {"key": "str",        "name": "STR (stage 9)",        "num": 9,  "fn": check_str},
+    {"key": "annotation", "name": "annotation (stage 11)","num": 11, "fn": check_annotation},
+    {"key": "cohortqc",   "name": "cohort QC (stage 12)", "num": 12, "fn": check_cohortqc},
+    {"key": "burden",     "name": "burden (stage 14)",    "num": 14, "fn": check_burden},
 ]
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--manifest", required=True, help="truth_manifest.json from build_fixture.py")
+    ap.add_argument("--manifest", required=True, help="RESOLVED truth_manifest.json")
     ap.add_argument("--results", required=True, help="CallForge results/ directory")
-    ap.add_argument("--skip-missing", action="store_true",
-                    help="treat absent stage outputs as SKIP (default) rather than FAIL")
+    ap.add_argument("--stages", default=None,
+                    help="comma list of stage keys to check (calling,cnv,str,annotation,"
+                         "cohortqc,burden); default: all")
+    ap.add_argument("--through", type=int, default=None,
+                    help="only stages with number <= N (e.g. 9 = spine: calling/cnv/str)")
+    ap.add_argument("--strict", action="store_true",
+                    help="treat a missing stage output as FAIL instead of SKIP")
     a = ap.parse_args()
 
     with open(a.manifest) as fh:
         man = json.load(fh)
+    stage_refs = man.get("stage_refs", {})
 
-    print(f"== CallForge simulation truth check ==")
-    print(f"manifest: {a.manifest}")
-    print(f"results:  {a.results}\n")
+    wanted = set(a.stages.split(",")) if a.stages else None
+    selected = [c for c in CHECKS
+                if (wanted is None or c["key"] in wanted)
+                and (a.through is None or c["num"] <= a.through)]
+    if not selected:
+        print("no stages selected"); return 0
 
-    summary = []
-    any_fail = False
-    for name, fn in CHECKS:
+    print("== CallForge REAL-reference simulation truth check ==")
+    print(f"manifest: {a.manifest}\nresults:  {a.results}")
+    sel = ", ".join(c["key"] for c in selected)
+    print(f"stages:   {sel}{' (through ' + str(a.through) + ')' if a.through else ''}\n")
+
+    summary, any_fail = [], False
+    for c in selected:
+        needs = ", ".join(stage_refs.get(c["key"], {}).get("needs", [])) or "genome"
         try:
-            status, lines = fn(man, a.results)
+            status, lines = c["fn"](man, a.results)
         except Exception as e:                      # never let one stage abort the report
             status, lines = FAIL, [f"checker error: {e}"]
-        if status == SKIP and not a.skip_missing:
-            status = FAIL
-        summary.append((name, status))
+        if status == SKIP:
+            lines = lines + [f"needs: {needs} (was that DB staged / stage run?)"]
+            if a.strict:
+                status = FAIL
+        summary.append((c["name"], status))
         if status == FAIL:
             any_fail = True
-        print(f"[{status}] {name}")
+        print(f"[{status}] {c['name']}")
         for ln in lines:
             print(f"        {ln}")
     print("\n== summary ==")
     for name, status in summary:
         print(f"  {status:4s}  {name}")
     overall = "FAIL" if any_fail else "PASS"
-    print(f"\nOVERALL: {overall}")
+    print(f"\nOVERALL: {overall}  ({'strict' if a.strict else 'skips allowed'})")
     return 1 if any_fail else 0
 
 
