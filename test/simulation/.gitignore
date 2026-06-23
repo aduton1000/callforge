@@ -1,0 +1,15 @@
+# Generated fixtures/results — never commit (build into scratch, not the repo).
+ref/
+fastq/
+resources/
+results/
+truth_manifest.json
+truth_manifest.tsv
+cohort_plan.json
+cohort_plan.tsv
+gene_set.tsv
+samplesheet.csv
+sim.params.yaml
+*.fastq.gz
+__pycache__/
+*.pyc
