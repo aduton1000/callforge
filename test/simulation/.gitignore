@@ -3,8 +3,10 @@ ref/
 fastq/
 resources/
 results/
+.readwork/
 truth_manifest.json
 truth_manifest.tsv
+manifest_skeleton.json
 cohort_plan.json
 cohort_plan.tsv
 gene_set.tsv

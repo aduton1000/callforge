@@ -34,6 +34,10 @@ dependencies:
   - picard=3.3.0              # CollectHsMetrics, MarkDuplicates (also in gatk4)
   - bcftools=1.21
   - bedtools=2.31.1
+  - dwgsim=1.1.14             # Illumina-error-model read simulator — used ONLY by the
+                              # real-reference validation harness (test/simulation/), not
+                              # the production pipeline. Adding it requires rebuilding the
+                              # .sif (apptainer build callforge.sif env/callforge.def).
   - mosdepth=0.3.8            # fast per-target / per-gene depth
                               # (native osx-arm64: use >=0.3.11 — 0.3.8 has no arm64
                               #  build; or create the env via CONDA_SUBDIR=osx-64)
