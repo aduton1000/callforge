@@ -32,6 +32,8 @@ process PREPARE_REFERENCE {
 
     input:
     path fasta
+    path fai_in      // pre-built ${fasta}.fai co-located with the FASTA, or assets/NO_FAI
+    path dict_in     // pre-built ${fasta.baseName}.dict co-located with it, or assets/NO_DICT
 
     output:
     path "${fasta}",        emit: fasta
@@ -40,7 +42,9 @@ process PREPARE_REFERENCE {
 
     script:
     """
-    # Build .fai / .dict if absent (idempotent; safe on the full genome).
+    # REUSE a co-located .fai / .dict if one was staged in (the workflow detects the
+    # pre-built file next to the FASTA and stages it here under its canonical name, so
+    # the guard below sees it). Build only when absent. Idempotent on the full genome.
     [ -s ${fasta}.fai ] || samtools faidx ${fasta}
     [ -s ${fasta.baseName}.dict ] || samtools dict ${fasta} -o ${fasta.baseName}.dict
     """
