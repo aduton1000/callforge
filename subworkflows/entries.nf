@@ -47,6 +47,23 @@ def bamChannel(spec) {
 def cfMetricsFile() { params.cf_metrics_json ? file(params.cf_metrics_json) : file("${projectDir}/assets/NO_METRICS") }
 def cfBaitsFile()   { params.cf_baits_csv    ? file(params.cf_baits_csv)    : file("${projectDir}/assets/NO_BAITS") }
 
+// helpers: REUSE a pre-built reference index instead of rebuilding it every run.
+// Expected bwa-mem2 index files (next to the FASTA, or in params.genome_index_dir
+// under the FASTA's basename so `bwa-mem2 mem <fasta>` resolves them).
+def bwaIdxFiles() {
+    def base = file(params.genome_fasta).name
+    def dir  = params.genome_index_dir ? file(params.genome_index_dir) : file(params.genome_fasta).parent
+    return ['0123', 'amb', 'ann', 'bwt.2bit.64', 'pac'].collect { file("${dir}/${base}.${it}") }
+}
+// Co-located pre-built .fai / .dict (or the matching NO_* placeholder) to STAGE into
+// PREPARE_REFERENCE so the in-process guard reuses it instead of rebuilding.
+def coRef(ext) {
+    def g    = file(params.genome_fasta)
+    def cand = (ext == 'dict') ? file("${g.parent}/${g.baseName}.dict")
+                               : file("${params.genome_fasta}.${ext}")
+    return cand.exists() ? cand : file("${projectDir}/assets/NO_${ext.toUpperCase()}")
+}
+
 // ── anno : re-annotate a VCF (VEP + vcfanno DBs + PhyloP), e.g. after a DB update ──
 workflow ANNO {
     main:
@@ -63,7 +80,7 @@ workflow ANNO {
     def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
 
     // ── validation: reference invariant (no-alt + build/contig) + DB scope gate ──
-    PREPARE_REFERENCE( ch_genome )
+    PREPARE_REFERENCE( ch_genome, coRef('fai'), coRef('dict') )
     REFERENCE_INVARIANT( PREPARE_REFERENCE.out.fai, ch_bed )
     DISCOVER_RESOURCES( Channel.value(params.resource_dirs), ch_bed )
     VALIDATE_STAGE_INPUTS( Channel.value('anno'), ch_vcf, PREPARE_REFERENCE.out.fai,
@@ -179,12 +196,23 @@ workflow ALIGN {
     ch_bed    = file(params.target_bed,   checkIfExists: true)
     def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
 
-    PREPARE_REFERENCE( ch_genome )
+    PREPARE_REFERENCE( ch_genome, coRef('fai'), coRef('dict') )
     REFERENCE_INVARIANT( PREPARE_REFERENCE.out.fai, ch_bed )      // no-alt + build/contig gate
-    BWAMEM2_INDEX( PREPARE_REFERENCE.out.fasta )
     FASTQC_RAW( ch_reads )
     FASTP( ch_reads )
-    BWAMEM2_ALIGN( FASTP.out.reads, PREPARE_REFERENCE.out.fasta, BWAMEM2_INDEX.out.idx )
+
+    // REUSE a complete co-located bwa-mem2 index; build it once only if missing.
+    def idxFiles = bwaIdxFiles()
+    def ch_bwa_idx
+    if (idxFiles.every { it.exists() }) {
+        log.info "[CallForge] Reusing pre-built bwa-mem2 index for ${params.genome_fasta} (BWAMEM2_INDEX skipped)."
+        ch_bwa_idx = Channel.value(idxFiles)
+    } else {
+        log.info "[CallForge] No complete pre-built bwa-mem2 index found — building it once (BWAMEM2_INDEX)."
+        BWAMEM2_INDEX( PREPARE_REFERENCE.out.fasta )
+        ch_bwa_idx = BWAMEM2_INDEX.out.idx
+    }
+    BWAMEM2_ALIGN( FASTP.out.reads, PREPARE_REFERENCE.out.fasta, ch_bwa_idx )
     MARKDUP( BWAMEM2_ALIGN.out.bam )
     BQSR( MARKDUP.out.bam, PREPARE_REFERENCE.out.fasta, PREPARE_REFERENCE.out.fai,
           PREPARE_REFERENCE.out.dict, Channel.value(params.known_sites ?: '') )
@@ -230,7 +258,7 @@ workflow COVERAGE {
     ch_bed    = file(params.target_bed,   checkIfExists: true)
     def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
 
-    PREPARE_REFERENCE( ch_genome )
+    PREPARE_REFERENCE( ch_genome, coRef('fai'), coRef('dict') )
     REFERENCE_INVARIANT( PREPARE_REFERENCE.out.fai, ch_bed )
     ch_v = VALIDATE_BAM( Channel.value('coverage'), ch_bams, PREPARE_REFERENCE.out.fai ).bam
 
@@ -282,7 +310,7 @@ workflow CALL {
     ch_bed    = file(params.target_bed,   checkIfExists: true)
     def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
 
-    PREPARE_REFERENCE( ch_genome )
+    PREPARE_REFERENCE( ch_genome, coRef('fai'), coRef('dict') )
     REFERENCE_INVARIANT( PREPARE_REFERENCE.out.fai, ch_bed )
     // pass-BAM semantics: assume QC-pass; validate index + contig agreement only.
     ch_v = VALIDATE_BAM( Channel.value('call'), ch_bams, PREPARE_REFERENCE.out.fai ).bam
@@ -342,7 +370,7 @@ workflow CNV {
     ch_bed    = file(params.target_bed,   checkIfExists: true)
     def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
 
-    PREPARE_REFERENCE( ch_genome )
+    PREPARE_REFERENCE( ch_genome, coRef('fai'), coRef('dict') )
     REFERENCE_INVARIANT( PREPARE_REFERENCE.out.fai, ch_bed )
     INGEST_CAPTUREFORGE( ch_bed, cfMetricsFile(), cfBaitsFile() )    // CaptureForge callability
     ch_gene_meta = INGEST_CAPTUREFORGE.out.tsv
@@ -376,7 +404,7 @@ workflow STR {
     ch_bed    = file(params.target_bed,   checkIfExists: true)
     def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
 
-    PREPARE_REFERENCE( ch_genome )
+    PREPARE_REFERENCE( ch_genome, coRef('fai'), coRef('dict') )
     REFERENCE_INVARIANT( PREPARE_REFERENCE.out.fai, ch_bed )
     INGEST_CAPTUREFORGE( ch_bed, cfMetricsFile(), cfBaitsFile() )
     ch_v = VALIDATE_BAM( Channel.value('str'), ch_bams, PREPARE_REFERENCE.out.fai ).bam
@@ -455,7 +483,7 @@ workflow COHORTQC {
     def noref = file("${projectDir}/assets/NO_CACHE")
     def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
 
-    PREPARE_REFERENCE( ch_genome )
+    PREPARE_REFERENCE( ch_genome, coRef('fai'), coRef('dict') )
     VALIDATE_SAMPLESHEET( ch_sheet )
     ch_v = VALIDATE_BAM( Channel.value('cohortqc'), ch_bams, PREPARE_REFERENCE.out.fai ).bam
     VALIDATE_STAGE_INPUTS( Channel.value('cohortqc'), ch_vcf, PREPARE_REFERENCE.out.fai,
@@ -497,7 +525,7 @@ workflow GIAB {
     def noref = file("${projectDir}/assets/NO_CACHE")
     def synth = (workflow.profile?.contains('test')) ? '--synthetic' : ''
 
-    PREPARE_REFERENCE( ch_genome )
+    PREPARE_REFERENCE( ch_genome, coRef('fai'), coRef('dict') )
     REFERENCE_INVARIANT( PREPARE_REFERENCE.out.fai, ch_bed )
     VALIDATE_STAGE_INPUTS( Channel.value('giab'), ch_vcf, PREPARE_REFERENCE.out.fai,
                            Channel.value(noref), Channel.value('') )

@@ -32,6 +32,28 @@ include { BURDEN_MATRIX; BURDEN_COLLAPSE; BURDEN_REGENIE; BURDEN_SKAT;
 
 include { MULTIQC; DASHBOARD; PROVENANCE } from '../modules/stage15_report.nf'
 
+// ── Pre-built reference reuse helpers ────────────────────────────────────────
+// The bwa-mem2 index, .fai and .dict are properties of the REFERENCE, not the
+// cohort — building them every run wastes 40-60 min on the full genome. Detect a
+// co-located pre-built copy and stage it in so it is reused instead of rebuilt.
+
+// Expected bwa-mem2 index files for the configured genome (next to the FASTA, or in
+// params.genome_index_dir using the FASTA's basename so `bwa-mem2 mem <fasta>` finds them).
+def bwaIdxFiles() {
+    def base = file(params.genome_fasta).name
+    def dir  = params.genome_index_dir ? file(params.genome_index_dir) : file(params.genome_fasta).parent
+    return ['0123', 'amb', 'ann', 'bwt.2bit.64', 'pac'].collect { file("${dir}/${base}.${it}") }
+}
+
+// Co-located pre-built .fai / .dict (or the matching NO_* placeholder) to STAGE into
+// PREPARE_REFERENCE. Named canonically so the in-process guard reuses them as-is.
+def coRef(ext) {
+    def g    = file(params.genome_fasta)
+    def cand = (ext == 'dict') ? file("${g.parent}/${g.baseName}.dict")
+                               : file("${params.genome_fasta}.${ext}")
+    return cand.exists() ? cand : file("${projectDir}/assets/NO_${ext.toUpperCase()}")
+}
+
 workflow CALLFORGE {
     take:
     ch_reads        // tuple(sample_id, fastq_1, fastq_2)
@@ -44,7 +66,7 @@ workflow CALLFORGE {
     main:
     // ── Stage 0 ──────────────────────────────────────────────────────────────
     VALIDATE_SAMPLESHEET( ch_sheet )
-    PREPARE_REFERENCE( ch_genome )
+    PREPARE_REFERENCE( ch_genome, coRef('fai'), coRef('dict') )
     REFERENCE_INVARIANT( PREPARE_REFERENCE.out.fai, ch_target_bed )
     DISCOVER_RESOURCES( Channel.value(params.resource_dirs), ch_target_bed )
     INGEST_CAPTUREFORGE( ch_target_bed, ch_cf_metrics, ch_cf_baits )
@@ -58,8 +80,19 @@ workflow CALLFORGE {
     // ── Stages 1-3 : raw QC -> trim -> align ─────────────────────────────────
     FASTQC_RAW( ch_reads )
     FASTP( ch_reads )
-    BWAMEM2_INDEX( PREPARE_REFERENCE.out.fasta )
-    BWAMEM2_ALIGN( FASTP.out.reads, PREPARE_REFERENCE.out.fasta, BWAMEM2_INDEX.out.idx )
+
+    // REUSE a complete co-located bwa-mem2 index; build it once only if missing.
+    def idxFiles = bwaIdxFiles()
+    def ch_bwa_idx
+    if (idxFiles.every { it.exists() }) {
+        log.info "[CallForge] Reusing pre-built bwa-mem2 index for ${params.genome_fasta} (BWAMEM2_INDEX skipped)."
+        ch_bwa_idx = Channel.value(idxFiles)
+    } else {
+        log.info "[CallForge] No complete pre-built bwa-mem2 index found — building it once (BWAMEM2_INDEX)."
+        BWAMEM2_INDEX( PREPARE_REFERENCE.out.fasta )
+        ch_bwa_idx = BWAMEM2_INDEX.out.idx
+    }
+    BWAMEM2_ALIGN( FASTP.out.reads, PREPARE_REFERENCE.out.fasta, ch_bwa_idx )
 
     // ── Stage 4 : dedup -> BQSR (graceful skip) -> HsMetrics/coverage ────────
     MARKDUP( BWAMEM2_ALIGN.out.bam )
