@@ -1,16 +1,42 @@
-# CallForge
+<!-- banner -->
+![CallForge](assets/banner.png)
 
-**A reproducible Nextflow pipeline for targeted-capture germline analysis — from FASTQ to an annotated joint callset, cohort QC, GIAB benchmarking, and rare-variant burden testing.**
+<p align="center">
+  <img alt="license" src="https://img.shields.io/badge/license-MIT-2b7bb9">
+  <img alt="nextflow" src="https://img.shields.io/badge/Nextflow-DSL2%20%E2%89%A523.10-0DC09D?logo=nextflow&logoColor=white">
+  <img alt="python" src="https://img.shields.io/badge/CLI-Python%203.10%2B-3776AB?logo=python&logoColor=white">
+  <img alt="platforms" src="https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-8A6D1C">
+  <img alt="status" src="https://img.shields.io/badge/status-research-9E2B25">
+</p>
 
-![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![Nextflow](https://img.shields.io/badge/Nextflow-DSL2%20%E2%89%A523.10-23aa62.svg)
-![CLI: Python](https://img.shields.io/badge/CLI-Python-3776ab.svg)
+<p align="center"><b>A reproducible Nextflow pipeline for targeted-capture germline analysis —<br>FASTQ to an annotated joint callset, cohort QC, GIAB benchmarking, and rare-variant burden testing.</b></p>
+
+---
 
 ## Overview
 
 CallForge takes demultiplexed paired-end FASTQs from a hybridization-capture panel through alignment, per-sample QC, SNV/indel joint calling, CNV / STR / paralog-aware analysis, annotation, cohort QC, GIAB benchmarking, and a rare-variant burden framework. It is disease- and organism-agnostic: change inputs and config, never code.
 
 It **runs standalone** — the minimum inputs are FASTQs, a reference, and a target BED. **[CaptureForge](https://github.com/aduton1000/captureforge) metadata is optional enrichment, not a prerequisite**: its per-gene metadata sharpens the interpretation layer (CNV callability, STR loci, paralog flags, burden gene-sets), and `callforge metadata` generates an equivalent table when CaptureForge is not in use. CallForge is the **analysis** counterpart to CaptureForge's **design**.
+
+## Pipeline
+
+```mermaid
+flowchart LR
+  FASTQ([FASTQ]) --> ALIGN[align<br/>bwa-mem2 · dedup · BQSR]
+  ALIGN --> COV[coverage<br/>per-sample QC gate]
+  COV --> CALL[call<br/>GATK / DeepVariant]
+  COV --> CNV[cnv]
+  COV --> STR[str]
+  CALL --> PARA[paralog-aware]
+  CALL --> ANNO[annotate<br/>VEP · vcfanno · PhyloP]
+  CNV --> ANNO
+  STR --> ANNO
+  PARA --> ANNO
+  ANNO --> CQC[cohort QC]
+  ANNO --> GIAB[GIAB benchmark]
+  ANNO --> BURDEN[rare-variant burden]
+```
 
 ## Features
 
