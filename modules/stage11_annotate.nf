@@ -8,6 +8,10 @@
 process VEP {
     tag "${params.panel_name}"; label 'medium'
     container params.vep_image
+    conda "${projectDir}/env/annotate.yml"   // local (Apple-Silicon) conda fallback: under
+                                             // -profile local,conda VEP runs from this env
+                                             // (ensembl-vep matched to the local cache release);
+                                             // the container is used under a container engine.
     publishDir "${params.outdir}/stage11_annotation/vep", mode: params.publish_mode
     input:
     tuple path(vcf), path(tbi)
@@ -23,7 +27,7 @@ process VEP {
     // cache mode is fully offline against the discovered VEP cache.
     def modeargs = params.vep_mode == 'gtf' ?
         "--gtf ${aux}" :
-        "--offline --cache --dir_cache ${aux} --species ${params.species} --assembly ${params.genome_build} --sift b --polyphen b --mane --hgvs"
+        "--offline --cache --dir_cache ${aux} --species ${params.species} --assembly ${params.genome_build} --sift b --polyphen b --mane --hgvs --af_gnomade --af_gnomadg --max_af"
     """
     vep ${common} ${modeargs} --fork ${task.cpus} -i ${vcf} -o vep.vcf.gz --compress_output bgzip
     tabix -p vcf vep.vcf.gz

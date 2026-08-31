@@ -38,10 +38,20 @@ def load_fai(fai):
     return contigs
 
 
+_CANON = {str(i) for i in range(1, 23)} | {"X", "Y", "M", "MT"}
+
+
 def chr_style(names):
-    # 'ucsc' if (almost) all contigs are chr-prefixed; 'ensembl' otherwise.
-    chrpref = sum(1 for n in names if n.startswith("chr"))
-    return "ucsc" if chrpref > len(names) / 2 else "ensembl"
+    # Classify by the CANONICAL chromosomes (1-22,X,Y,M) only — a hybrid assembly
+    # (chr-prefixed main chromosomes + Ensembl-named unplaced scaffolds like KI270..,
+    # GL000..) must not be mis-classified by a scaffold-diluted majority vote. Coordinate
+    # agreement with the BED only depends on how the canonical chromosomes are named.
+    def canon(n):
+        return n[3:] if n.startswith("chr") else n
+    core = [n for n in names if canon(n) in _CANON]
+    basis = core or list(names)
+    chrpref = sum(1 for n in basis if n.startswith("chr"))
+    return "ucsc" if chrpref > len(basis) / 2 else "ensembl"
 
 
 def main():

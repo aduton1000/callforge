@@ -10,7 +10,7 @@ channels:
   - conda-forge
   - bioconda
 dependencies:
-  - ensembl-vep=110.1         # match to discovered VEP cache release (110/112 both seen locally)
+  - ensembl-vep=112.0         # match to discovered VEP cache release (local cache: 112_GRCh38)
   - vcfanno=0.3.5
   - bcftools=1.21
   - htslib=1.21
