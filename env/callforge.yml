@@ -46,7 +46,10 @@ dependencies:
   # ---- base utilities (lean micromamba base lacks these; Nextflow task wrappers
   #      + shell scripts assume them inside the container). Left unpinned: base
   #      utils, not analysis tools — pinning them risks solver conflicts. ----
-  - procps-ng              # provides `ps` — REQUIRED by Nextflow task metric collection
+  # procps-ng (provides `ps` for Nextflow task metrics) has NO osx build and breaks a
+  # local macOS conda solve. Commented out: macOS supplies `ps` natively, and Linux
+  # singularity/docker runs get `ps` from the container OS image (not this conda env).
+  # - procps-ng
   - coreutils              # date, stat, env, etc.
   - grep
   - sed
