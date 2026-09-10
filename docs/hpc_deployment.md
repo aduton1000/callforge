@@ -48,6 +48,28 @@ sudo singularity build callforge.sif env/callforge.def
 #   Build from the provided `.def` (don't trim it).
 ```
 
+### 1b. Build the per-stage images (tools NOT in `callforge.sif`)
+
+CNVkit, ExpansionHunter, vcfanno, somalier/peddy/verifyBamID2, regenie/plink2/R-SKAT and
+GLnexus live only in `env/{cnv,str,annotate,cohortqc,burden,glnexus}.yml`. Under a
+container engine their processes resolve `--<stage>_image`, else
+`<stage_images_dir>/callforge-<stage>.sif`, else the core image — where the tool is
+absent and the task fails with *command not found* (`main.nf` warns at start). Build
+the set once per site next to `callforge.sif`:
+
+```bash
+# Docker available (build natively, convert to SIF — works without fakeroot):
+bash bin/build_stage_images.sh --out /hpc/opt/callforge/images
+# No Docker but fakeroot configured:
+bash bin/build_stage_images.sh --out /hpc/opt/callforge/images --engine apptainer
+# a subset, or rebuild:
+bash bin/build_stage_images.sh --out … --only cnv,str --rebuild
+```
+
+`callforge-run` passes `--stage_images_dir $CALLFORGE_IMAGES` (default: the `.sif`'s
+directory) whenever `callforge-<stage>.sif` files exist there; `stage_images_dir:` in
+the params file does the same for direct `nextflow run` use.
+
 > **Stage-specific images are pulled separately.** A few stages pin their own official
 > images and are **not** part of `callforge.sif` — VEP (`ensemblorg/ensembl-vep`), hap.py
 > (`jmcdani20/hap.py`), and DeepVariant (`google/deepvariant`, only with

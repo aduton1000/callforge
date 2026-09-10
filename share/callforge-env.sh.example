@@ -24,6 +24,10 @@ export PATH="$CALLFORGE_HOME/share/bin:$CALLFORGE_HOME/bin:$PATH"
 # Container image built from env/callforge.def (see docs/hpc_deployment.md §1).
 export CALLFORGE_SIF="$CALLFORGE_HOME/callforge.sif"        # [EDIT if elsewhere]
 
+# Per-stage images (callforge-{annotate,cnv,str,cohortqc,burden,glnexus}.sif) built by
+# bin/build_stage_images.sh — tools NOT in callforge.sif. Default: the .sif's directory.
+export CALLFORGE_IMAGES="$(dirname "$CALLFORGE_SIF")"       # [EDIT if elsewhere]
+
 # Reference + resource root (no-alt genome FASTA + .fai/.dict, target BED, VEP cache,
 # gnomAD-AFR / dbSNP / ClinVar VCFs, PhyloP bigWig, known-sites, somalier sites, GIAB …).
 export CALLFORGE_REFS="/hpc/refs/callforge/GRCh38"          # [EDIT]

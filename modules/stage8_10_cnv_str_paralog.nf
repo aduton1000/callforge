@@ -6,6 +6,8 @@
 
 process CNVKIT_BATCH {
     tag "${params.panel_name}"; label 'large'
+    // image: --cnv_image, else <stage_images_dir>/callforge-cnv.sif, else the core image (tool absent!)
+    container { params.cnv_image ?: (params.stage_images_dir ? "${params.stage_images_dir}/callforge-cnv.sif" : params.container_image) }
     conda "${projectDir}/env/cnv.yml"
     publishDir "${params.outdir}/stage8_cnv/cnvkit", mode: params.publish_mode
     input:
@@ -90,6 +92,8 @@ process BUILD_STR_CATALOG {
 
 process EXPANSIONHUNTER {
     tag "${sample_id}"; label 'medium'
+    // image: --str_image, else <stage_images_dir>/callforge-str.sif, else the core image (tool absent!)
+    container { params.str_image ?: (params.stage_images_dir ? "${params.stage_images_dir}/callforge-str.sif" : params.container_image) }
     conda "${projectDir}/env/str.yml"
     publishDir "${params.outdir}/stage9_str/per_sample", mode: params.publish_mode
     input:

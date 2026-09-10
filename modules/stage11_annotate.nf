@@ -36,6 +36,8 @@ process VEP {
 
 process ANNOTATE_DBS {
     tag "${params.panel_name}"; label 'medium'
+    // image: --annotate_image, else <stage_images_dir>/callforge-annotate.sif, else the core image (tool absent!)
+    container { params.annotate_image ?: (params.stage_images_dir ? "${params.stage_images_dir}/callforge-annotate.sif" : params.container_image) }
     conda "${projectDir}/env/annotate.yml"
     publishDir "${params.outdir}/stage11_annotation", mode: params.publish_mode
     input:

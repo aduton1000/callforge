@@ -50,6 +50,8 @@ process BURDEN_COLLAPSE {
 process BURDEN_REGENIE {
     // Production engine (Firth-corrected, covariate-adjusted). Needs a real cohort.
     tag "${params.panel_name}"; label 'medium'
+    // image: --burden_image, else <stage_images_dir>/callforge-burden.sif, else the core image (tool absent!)
+    container { params.burden_image ?: (params.stage_images_dir ? "${params.stage_images_dir}/callforge-burden.sif" : params.container_image) }
     conda "${projectDir}/env/burden.yml"
     publishDir "${params.outdir}/stage14_burden", mode: params.publish_mode
     input:
@@ -68,6 +70,8 @@ process BURDEN_REGENIE {
 process BURDEN_SKAT {
     // Alternative engine: SKAT-O / STAAR in R. Needs a real cohort.
     tag "${params.panel_name}"; label 'medium'
+    // image: --burden_image, else <stage_images_dir>/callforge-burden.sif, else the core image (tool absent!)
+    container { params.burden_image ?: (params.stage_images_dir ? "${params.stage_images_dir}/callforge-burden.sif" : params.container_image) }
     conda "${projectDir}/env/burden.yml"
     publishDir "${params.outdir}/stage14_burden", mode: params.publish_mode
     input:

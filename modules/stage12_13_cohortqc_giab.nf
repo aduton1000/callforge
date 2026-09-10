@@ -7,6 +7,8 @@
 
 process SOMALIER_EXTRACT {
     tag "${sample_id}"; label 'small'
+    // image: --cohortqc_image, else <stage_images_dir>/callforge-cohortqc.sif, else the core image (tool absent!)
+    container { params.cohortqc_image ?: (params.stage_images_dir ? "${params.stage_images_dir}/callforge-cohortqc.sif" : params.container_image) }
     conda "${projectDir}/env/cohortqc.yml"
     input:
     tuple val(sample_id), path(bam), path(bai)
@@ -24,6 +26,8 @@ process SOMALIER_EXTRACT {
 
 process SOMALIER_RELATE {
     tag "${params.panel_name}"; label 'small'
+    // image: --cohortqc_image, else <stage_images_dir>/callforge-cohortqc.sif, else the core image (tool absent!)
+    container { params.cohortqc_image ?: (params.stage_images_dir ? "${params.stage_images_dir}/callforge-cohortqc.sif" : params.container_image) }
     conda "${projectDir}/env/cohortqc.yml"
     publishDir "${params.outdir}/stage12_cohortqc/somalier", mode: params.publish_mode
     input:

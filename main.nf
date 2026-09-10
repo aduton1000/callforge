@@ -49,6 +49,16 @@ workflow {
     // Guard: an enabled container engine with no image silently runs tasks on the
     // HOST (host tools may be incomplete — e.g. no gatk/bwa-mem2/matplotlib). Fail
     // loudly instead. (VEP/hap.py/DeepVariant pin their own images and are exempt.)
+    // Per-stage images (tools absent from the core image). Not fatal — a run that skips
+    // those stages is fine — but say it loudly so "command not found" later is no surprise.
+    if (workflow.containerEngine && !params.stage_images_dir) {
+        def missing = [annotate: params.annotate_image, cnv: params.cnv_image, str: params.str_image,
+                       cohortqc: params.cohortqc_image, burden: params.burden_image, glnexus: params.glnexus_image]
+                      .findAll { k, v -> !v }.keySet()
+        if (missing) log.warn "No per-stage image for: ${missing.join(', ')} — those processes will run inside the CORE image, " +
+                              "which lacks their tools (CNVkit/ExpansionHunter/vcfanno/somalier/regenie/GLnexus). " +
+                              "Build them with bin/build_stage_images.sh and set --stage_images_dir (or CALLFORGE_IMAGES)."
+    }
     if (workflow.containerEngine && !params.container_image) {
         exit 1, "ERROR: container engine '${workflow.containerEngine}' is enabled but --container_image is unset.\n" +
                 "  Set it to the image so tasks run inside the container, e.g.\n" +
