@@ -6,7 +6,8 @@
 #     cnv       CNVkit + DNAcopy             env/cnv.yml
 #     str       ExpansionHunter              env/str.yml
 #     cohortqc  somalier, peddy, verifyBamID2 env/cohortqc.yml
-#     burden    regenie, plink2, R SKAT/STAAR env/burden.yml
+#     burden    regenie, plink2                env/burden.yml
+#     skat      R SKAT-O + STAAR (GitHub)       env/skat.yml
 #     glnexus   GLnexus                      env/glnexus.yml
 # Each becomes <out>/callforge-<stage>.sif, which the pipeline resolves via
 # --stage_images_dir (callforge-run sets it from CALLFORGE_IMAGES).
@@ -36,7 +37,8 @@ while [ $# -gt 0 ]; do case "$1" in
   --rebuild) REBUILD=1;; --docker-only) DOCKER_ONLY=1;; --dry-run) DRY=1;;
   -h|--help) sed -n '2,30p' "$0"; exit 0;; *) echo "unknown option $1" >&2; exit 2;;
 esac; shift; done
-STAGES=(annotate cnv str cohortqc burden glnexus)
+STAGES=(annotate cnv str cohortqc burden skat glnexus)
+STAAR_TAG="${STAAR_TAG:-v0.9.8.1}"   # xihaoli/STAAR release installed into the skat image
 [ -n "$ONLY" ] && IFS=',' read -r -a STAGES <<<"$ONLY"
 [ "$DOCKER_ONLY" = 1 ] || [ -n "$OUT" ] || { echo "--out DIR is required" >&2; exit 2; }
 log(){ printf '\n\033[1;34m[stage-images]\033[0m %s\n' "$*"; }
@@ -54,13 +56,21 @@ esac
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/cf_stage_images.XXXXXX")"; trap 'rm -rf "$TMP"' EXIT
 export APPTAINER_TMPDIR="${APPTAINER_TMPDIR:-${OUT:-$TMP}/.tmp}"; [ "$DRY" = 1 ] || mkdir -p "$APPTAINER_TMPDIR"
 
+# extra build steps after the conda env (Dockerfile RUN line / shell line for the .def)
+post_install_sh(){ case "$1" in
+  skat) echo "Rscript -e 'install.packages(\"GMMAT\", repos=\"https://cloud.r-project.org\"); library(GMMAT); remotes::install_github(\"xihaoli/STAAR@$STAAR_TAG\", upgrade=\"never\", dependencies=FALSE)'";;
+  *) echo ":";;
+esac; }
+post_install(){ echo "RUN $(post_install_sh "$1")"; }
+
 # tool each image must be able to run (build-time smoke test)
 smoke(){ case "$1" in
   annotate) echo 'vcfanno 2>&1 | head -1; python3 --version; ps --version | head -1';;
   cnv)      echo 'cnvkit.py version; ps --version | head -1';;
   str)      echo 'ExpansionHunter --version 2>&1 | head -1; ps --version | head -1';;
   cohortqc) echo 'somalier --version 2>&1 | head -1; peddy --version 2>&1 | head -1; ps --version | head -1';;
-  burden)   echo 'regenie --version 2>&1 | head -1; plink2 --version | head -1; Rscript -e "library(SKAT); library(jsonlite)"; ps --version | head -1';;
+  burden)   echo 'regenie --version 2>&1 | head -1; plink2 --version | head -1; ps --version | head -1';;
+  skat)     echo 'Rscript -e "suppressMessages({library(SKAT); library(jsonlite); library(STAAR)}); cat(\"SKAT\", as.character(packageVersion(\"SKAT\")), \"STAAR\", as.character(packageVersion(\"STAAR\")), \"\\n\")"; ps --version | head -1';;
   glnexus)  echo 'glnexus_cli --version 2>&1 | head -1; bcftools --version | head -1; ps --version | head -1';;
 esac; }
 
@@ -78,14 +88,18 @@ ENV LC_ALL=C.UTF-8 LANG=C.UTF-8 MPLCONFIGDIR=/tmp/matplotlib
 COPY $st.yml /tmp/env.yml
 RUN micromamba install -y -n base -f /tmp/env.yml && micromamba clean --all --yes
 ENV PATH=/opt/conda/bin:\$PATH
+$(post_install "$st")
 RUN $(smoke "$st")
 WORKDIR /work
 EOF
     [ "$DRY" = 1 ] || cp "$yml" "$TMP/$st.yml"
     run docker build --platform linux/amd64 -t "$tag" -f "$TMP/Dockerfile.$st" "$TMP"
     if [ "$DOCKER_ONLY" = 0 ]; then
-      [ "$DRY" = 1 ] || rm -f "$sif"
-      run "$RT" build "$sif" "docker-daemon://$tag"
+      # build to a temp name, rename on success: an interrupted build (ssh drop) must
+      # never leave a truncated .sif that the skip-if-present check treats as finished.
+      [ "$DRY" = 1 ] || rm -f "$sif" "$sif.part"
+      run "$RT" build "$sif.part" "docker-daemon://$tag"
+      run mv "$sif.part" "$sif"
     fi
   else
     cat > "$TMP/$st.def" <<EOF
@@ -96,6 +110,8 @@ From: mambaorg/micromamba:1.5.8
 %post
     export LC_ALL=C.UTF-8 LANG=C.UTF-8
     micromamba install -y -n base -f /tmp/env.yml && micromamba clean --all --yes
+    export PATH=/opt/conda/bin:\$PATH
+    $(post_install_sh "$st")
 %environment
     export PATH=/opt/conda/bin:\$PATH LC_ALL=C.UTF-8 LANG=C.UTF-8 MPLCONFIGDIR=/tmp/matplotlib
 %test
@@ -105,8 +121,9 @@ From: mambaorg/micromamba:1.5.8
     Name CallForge-$st
     Version $VERSION
 EOF
-    [ "$DRY" = 1 ] || rm -f "$sif"
-    run "$RT" build --fakeroot "$sif" "$TMP/$st.def"
+    [ "$DRY" = 1 ] || rm -f "$sif" "$sif.part"
+    run "$RT" build --fakeroot "$sif.part" "$TMP/$st.def"
+    run mv "$sif.part" "$sif"
   fi
   if [ -n "$sif" ] && [ "$DOCKER_ONLY" = 0 ] && [ "$DRY" = 0 ]; then
     log "$st: verify inside $sif"
