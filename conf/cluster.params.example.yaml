@@ -33,7 +33,7 @@ resource_dirs:  "/hpc/refs/callforge/annotation_db,/hpc/refs/callforge/GRCh38"  
 allow_download: false                                                     # never fetch mid-run unless opted in
 # Explicit overrides (else discovered):
 # vep_cache:    /hpc/refs/callforge/vep/.vep                              # [EDIT/optional]
-# vep_release:  110
+# vep_release:  112
 # gnomad_vcf:   /hpc/refs/callforge/annotation_db/gnomad.afr.vcf.gz       # [EDIT/optional]
 # dbsnp_vcf:    /hpc/refs/callforge/annotation_db/dbsnp.vcf.gz            # [EDIT/optional]
 # clinvar_vcf:  /hpc/refs/callforge/annotation_db/clinvar.vcf.gz          # [EDIT/optional]

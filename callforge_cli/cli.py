@@ -198,7 +198,7 @@ Provenance: [install]=env file once · [site]=params file once per cluster ·
   --caller X (gatk: gatk|deepvariant)        --ploidy N (2)   --joint_method X (genomicsdb)
   --cnv_caller X (cnvkit)  --cnv_method X (hybrid)  --cnv_segment_method X (cbs)
   --cnv_min_samples_pon N (5)   --str_motif X (GT)   --paralog_min_mq N (50)
-  --vep_mode X (cache|gtf)  --gtf PATH (for vep_mode=gtf)  --vep_image X (ensemblorg/ensembl-vep:release_110.0)
+  --vep_mode X (cache|gtf)  --gtf PATH (for vep_mode=gtf)  --vep_image X (ensemblorg/ensembl-vep:release_112.0)
   --min_mean_target_depth N (30)  --max_dup_rate F (0.40)  --min_on_target F (0.40)
   --max_contamination F (0.03)  --enforce_sex_check BOOL (true)
   --run_burden BOOL (true; auto-skip if no phenotype)  --burden_engine X (regenie|skat|collapse)

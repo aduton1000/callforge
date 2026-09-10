@@ -25,7 +25,7 @@ resource_dirs: "/home/me,/usr/local/share,/data/refs"
 allow_download: false        # set true only if a required DB is missing and you opt in
 # Explicit overrides (else discovered):
 # vep_cache:    /path/to/.vep
-# vep_release:  110
+# vep_release:  112
 # gnomad_vcf:   /path/to/gnomad.afr.vcf.gz
 # dbsnp_vcf:    /path/to/dbsnp.vcf.gz
 # clinvar_vcf:  /path/to/clinvar.vcf.gz

@@ -633,7 +633,7 @@ Profiles set executor + resource ceilings: **`test`** (3–4 synthetic samples, 
 | `--vep_image` | ensembl-vep 110 | VEP container (tag below) |
 | `--happy_image` | hap.py 0.3.12 | hap.py container (tag below) |
 
-The container defaults are `ensemblorg/ensembl-vep:release_110.0` (VEP) and
+The container defaults are `ensemblorg/ensembl-vep:release_112.0` (VEP) and
 `jmcdani20/hap.py:v0.3.12` (hap.py).
 
 > **Hard-filter thresholds are the GATK WGS/WES defaults.** Revisit them on real targeted
@@ -722,7 +722,7 @@ Every CallForge parameter, its real default, whether it is required, and its **p
 | `--str_motif` | fallback motif when building an STR catalog | no | `GT` | [optional] |
 | `--paralog_min_mq` | MQ below which a paralog-region call is flagged | no | `50` | [optional] |
 | `--vep_mode` / `--gtf` / `--vep_extra` | `cache`\|`gtf`; GTF for gtf mode; extra VEP flags | no | `cache` / `null` / `''` | [optional]/[stage-dependent] |
-| `--vep_image` | VEP container | no | `ensemblorg/ensembl-vep:release_110.0` | [optional] |
+| `--vep_image` | VEP container | no | `ensemblorg/ensembl-vep:release_112.0` | [optional] |
 | `--somalier_sites` | somalier sites VCF (cohort QC) | no | `null` | [stage-dependent] |
 | `--giab_control_id` | control `sample_id` in the callset to benchmark | no | `null` | [per-run] |
 | `--giab_truth_vcf` / `--giab_truth_bed` | GIAB truth VCF / high-confidence BED | no | `null` | [site] |
