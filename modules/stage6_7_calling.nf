@@ -211,7 +211,9 @@ process DEEPVARIANT {
 
 process GLNEXUS {
     tag "${params.panel_name}"; label 'large'
-    conda "${projectDir}/env/deepvariant.yml"
+    // image: --glnexus_image, else <stage_images_dir>/callforge-glnexus.sif, else the core image (tool absent!)
+    container { params.glnexus_image ?: (params.stage_images_dir ? "${params.stage_images_dir}/callforge-glnexus.sif" : params.container_image) }
+    conda "${projectDir}/env/glnexus.yml"
     publishDir "${params.outdir}/stage6_calling", mode: params.publish_mode
     input:
     path gvcfs

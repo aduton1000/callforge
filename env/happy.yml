@@ -12,3 +12,4 @@ dependencies:
   - hap.py=0.3.15
   - bcftools=1.21
   - samtools=1.21
+  - procps-ng                  # `ps` — required by Nextflow's task wrapper inside containers

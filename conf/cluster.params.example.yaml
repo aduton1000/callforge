@@ -46,6 +46,10 @@ allow_download: false                                                     # neve
 # CALLFORGE_SIF, so you can usually omit it here. (VEP/hap.py/DeepVariant pin their own
 # official images and are unaffected.)
 container_image: /hpc/opt/callforge/callforge.sif                         # [EDIT or rely on wrapper]
+# Per-stage images for tools NOT in the core .sif (CNVkit, ExpansionHunter, vcfanno,
+# somalier/peddy, regenie/SKAT, GLnexus): callforge-<stage>.sif in this dir, built once
+# with bin/build_stage_images.sh. The wrapper fills this from CALLFORGE_IMAGES.
+stage_images_dir: /hpc/opt/callforge/images                               # [EDIT or rely on wrapper]
 
 # ---- Container bind for referenced-in-place refs ---------------------------
 # Singularity/Apptainer auto-mount only $HOME, /tmp, CWD. Bind the root that holds the

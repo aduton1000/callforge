@@ -17,3 +17,5 @@ dependencies:
   - r-skat=2.2.5
   - bioconductor-staar=0.9.7
   - r-data.table=1.15.4
+  - r-jsonlite                 # run_skat_burden.R
+  - procps-ng                  # `ps` — required by Nextflow's task wrapper inside containers

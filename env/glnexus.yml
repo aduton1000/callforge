@@ -1,0 +1,12 @@
+# env/glnexus.yml — GLnexus joint genotyping for the DeepVariant path (Stage 6/7 GLNEXUS).
+# Deliberately tiny: deepvariant.yml drags the whole DeepVariant conda build, which is
+# never needed under a container engine (DEEPVARIANT pins google/deepvariant).
+name: callforge-glnexus
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - glnexus=1.4.1
+  - bcftools=1.21
+  - htslib=1.21               # bgzip
+  - procps-ng                  # `ps` — required by Nextflow's task wrapper inside containers

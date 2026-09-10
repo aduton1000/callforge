@@ -18,6 +18,7 @@
 # Environment (all optional; defaults derived from this script's install location):
 #   CALLFORGE_HOME     install/repo root        (default: parent of this script's share/bin)
 #   CALLFORGE_SIF      path to callforge.sif    (default: $CALLFORGE_HOME/callforge.sif)
+#   CALLFORGE_IMAGES   dir holding callforge-<stage>.sif (default: dirname of CALLFORGE_SIF)
 #   CALLFORGE_REFS     reference dir            (default: $CALLFORGE_HOME/refs)
 #   CALLFORGE_ENGINE   apptainer | singularity  (default: singularity — this cluster has no `apptainer`)
 #   CALLFORGE_PROFILE  full -profile string     (default: hpc_slurm,$CALLFORGE_ENGINE)
@@ -57,6 +58,7 @@ callforge-run — shared HPC launcher (forwards to: nextflow run main.nf)
   CALLFORGE_ENGINE  = ${ENGINE}
   CALLFORGE_PROFILE = ${PROFILE}
   CALLFORGE_SIF     = ${SIF}
+  CALLFORGE_IMAGES  = ${CALLFORGE_IMAGES:-$(dirname "$SIF")}   # per-stage .sif set (bin/build_stage_images.sh)
   CALLFORGE_REFS    = ${REFS}
   CALLFORGE_BIND    = ${BIND:-<none>}   # container bind mounts (exports SINGULARITY_BIND/APPTAINER_BIND + --bind_paths)
 
@@ -76,6 +78,14 @@ if [[ -f "$SIF" ]]; then
   extra+=("--container_image" "$SIF")
 else
   echo "[callforge-run] note: no .sif at '$SIF' — set CALLFORGE_SIF to point at callforge.sif, or pass --container_image. Without an image the run will fail loudly (engine enabled, no image)." >&2
+fi
+# Per-stage images (callforge-<stage>.sif, built by bin/build_stage_images.sh) — the tools
+# CNVkit/ExpansionHunter/vcfanno/somalier/regenie/GLnexus are NOT in callforge.sif.
+IMAGES="${CALLFORGE_IMAGES:-$(dirname "$SIF")}"
+if ls "$IMAGES"/callforge-*.sif >/dev/null 2>&1; then
+  extra+=("--stage_images_dir" "$IMAGES")
+else
+  echo "[callforge-run] note: no callforge-<stage>.sif under '$IMAGES' — CNV/STR/annotation-DB/cohort-QC/burden/GLnexus stages will fail inside the core image. Build them: bin/build_stage_images.sh --out $IMAGES" >&2
 fi
 # Make referenced-in-place refs visible inside tasks, via BOTH supported routes:
 #   1) export SINGULARITY_BIND / APPTAINER_BIND — the engine reads these; Nextflow
