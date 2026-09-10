@@ -11,3 +11,4 @@ dependencies:
   - expansionhunter=5.0.0
   - samtools=1.21
   - bcftools=1.21
+  - procps-ng                  # `ps` — required by Nextflow's task wrapper inside containers

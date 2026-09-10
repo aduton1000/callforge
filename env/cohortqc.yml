@@ -14,3 +14,4 @@ dependencies:
   - verifybamid2=2.0.1
   - bcftools=1.21
   - samtools=1.21
+  - procps-ng                  # `ps` — required by Nextflow's task wrapper inside containers
