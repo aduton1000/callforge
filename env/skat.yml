@@ -1,0 +1,36 @@
+# env/skat.yml — Stage 14 gene-burden, R alternative (--burden_engine skat):
+# run_skat_burden.R = per-gene SKAT-O. STAAR (functionally-informed rare-variant tests,
+# Li et al. 2020) is NOT on conda; its dependencies are here and the package itself is
+# installed from its GitHub release when the image is built (bin/build_stage_images.sh,
+# STAAR_TAG) or, for the conda path, with:
+#   Rscript -e 'install.packages("GMMAT", repos="https://cloud.r-project.org")'
+#   Rscript -e 'remotes::install_github("xihaoli/STAAR@v0.9.8.1", upgrade="never", dependencies=FALSE)'
+# NOTE: STAAR is packaged so it is ready, but no callforge script calls it yet — the R
+# engine currently runs SKAT-O only.
+name: callforge-skat
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base=4.3.3
+  - r-skat=2.2.5
+  - r-jsonlite                 # run_skat_burden.R
+  - r-data.table=1.15.4
+  # ---- STAAR dependencies (Imports: Rcpp, GMMAT, GENESIS, Matrix; LinkingTo: RcppArmadillo) ----
+  # GMMAT is CRAN-only (no conda package) -> installed from CRAN at image build together
+  # with STAAR; its own Imports (Rcpp, CompQuadForm, foreach, Matrix, data.table) are here.
+  - r-rcpp
+  - r-rcpparmadillo
+  - r-compquadform
+  - r-foreach
+  - bioconductor-genesis
+  - r-matrix
+  - r-remotes                  # install_github at image build
+  - c-compiler                 # GMMAT + STAAR compile from source (Rcpp/RcppArmadillo)
+  - cxx-compiler
+  - make
+  - zlib                       # GMMAT links zlib/bzip2/xz (headers needed at compile time)
+  - bzip2
+  - xz
+  - bcftools=1.21
+  - procps-ng                  # `ps` — required by Nextflow's task wrapper inside containers

@@ -68,11 +68,11 @@ process BURDEN_REGENIE {
 }
 
 process BURDEN_SKAT {
-    // Alternative engine: SKAT-O / STAAR in R. Needs a real cohort.
+    // Alternative engine: SKAT-O in R (STAAR packaged in the same env/image, not yet wired). Needs a real cohort.
     tag "${params.panel_name}"; label 'medium'
-    // image: --burden_image, else <stage_images_dir>/callforge-burden.sif, else the core image (tool absent!)
-    container { params.burden_image ?: (params.stage_images_dir ? "${params.stage_images_dir}/callforge-burden.sif" : params.container_image) }
-    conda "${projectDir}/env/burden.yml"
+    // image: --skat_image, else <stage_images_dir>/callforge-skat.sif, else the core image (tool absent!)
+    container { params.skat_image ?: (params.stage_images_dir ? "${params.stage_images_dir}/callforge-skat.sif" : params.container_image) }
+    conda "${projectDir}/env/skat.yml"
     publishDir "${params.outdir}/stage14_burden", mode: params.publish_mode
     input:
     path genotypes

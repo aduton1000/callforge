@@ -50,8 +50,10 @@ sudo singularity build callforge.sif env/callforge.def
 
 ### 1b. Build the per-stage images (tools NOT in `callforge.sif`)
 
-CNVkit, ExpansionHunter, vcfanno, somalier/peddy/verifyBamID2, regenie/plink2/R-SKAT and
-GLnexus live only in `env/{cnv,str,annotate,cohortqc,burden,glnexus}.yml`. Under a
+CNVkit, ExpansionHunter, vcfanno, somalier/peddy/verifyBamID2, regenie/plink2, R SKAT-O
+(with STAAR installed from GitHub at build time; packaged, not yet wired as a test) and
+GLnexus live only in `env/{cnv,str,annotate,cohortqc,burden,skat,glnexus}.yml`. regenie
+and R are separate images because regenie 3.6's Boost pin cannot coexist with R 4.3. Under a
 container engine their processes resolve `--<stage>_image`, else
 `<stage_images_dir>/callforge-<stage>.sif`, else the core image — where the tool is
 absent and the task fails with *command not found* (`main.nf` warns at start). Build
