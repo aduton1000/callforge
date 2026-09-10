@@ -1,9 +1,7 @@
-# ═══════════════════════════════════════════════════════════════════════════
-#  CallForge — rare-variant burden / association environment (Stage 14)
-#  regenie is the default gene-burden engine (Firth-corrected, scales to large
-#  cohorts; uses ancestry PCs + sample-sheet covariates). The R-based
-#  alternative (SKAT-O / STAAR) is provided too for small-N gene-set tests.
-# ═══════════════════════════════════════════════════════════════════════════
+# env/burden.yml — Stage 14 gene-burden, PRODUCTION engine: regenie (Firth-corrected,
+# covariate-adjusted) + plink2 for genotype prep. The R alternative (SKAT-O, with STAAR
+# packaged) lives in env/skat.yml — SPLIT on purpose: regenie 3.6 pins boost-cpp 1.74,
+# whose ICU requirement cannot coexist with r-base 4.3.x in one env.
 name: callforge-burden
 channels:
   - conda-forge
@@ -12,10 +10,4 @@ dependencies:
   - regenie=3.6
   - plink2=2.00a5.10          # genotype prep (BGEN/PGEN) for regenie
   - bcftools=1.21
-  # ---- R alternative: SKAT-O / STAAR (use --burden_engine skat) ----
-  - r-base=4.3.3
-  - r-skat=2.2.5
-  - bioconductor-staar=0.9.7
-  - r-data.table=1.15.4
-  - r-jsonlite                 # run_skat_burden.R
   - procps-ng                  # `ps` — required by Nextflow's task wrapper inside containers

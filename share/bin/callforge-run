@@ -85,7 +85,7 @@ IMAGES="${CALLFORGE_IMAGES:-$(dirname "$SIF")}"
 if ls "$IMAGES"/callforge-*.sif >/dev/null 2>&1; then
   extra+=("--stage_images_dir" "$IMAGES")
 else
-  echo "[callforge-run] note: no callforge-<stage>.sif under '$IMAGES' — CNV/STR/annotation-DB/cohort-QC/burden/GLnexus stages will fail inside the core image. Build them: bin/build_stage_images.sh --out $IMAGES" >&2
+  echo "[callforge-run] note: no callforge-<stage>.sif under '$IMAGES' — CNV/STR/annotation-DB/cohort-QC/burden/SKAT/GLnexus stages will fail inside the core image. Build them: bin/build_stage_images.sh --out $IMAGES" >&2
 fi
 # Make referenced-in-place refs visible inside tasks, via BOTH supported routes:
 #   1) export SINGULARITY_BIND / APPTAINER_BIND — the engine reads these; Nextflow

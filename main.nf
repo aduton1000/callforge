@@ -53,7 +53,7 @@ workflow {
     // those stages is fine — but say it loudly so "command not found" later is no surprise.
     if (workflow.containerEngine && !params.stage_images_dir) {
         def missing = [annotate: params.annotate_image, cnv: params.cnv_image, str: params.str_image,
-                       cohortqc: params.cohortqc_image, burden: params.burden_image, glnexus: params.glnexus_image]
+                       cohortqc: params.cohortqc_image, burden: params.burden_image, skat: params.skat_image, glnexus: params.glnexus_image]
                       .findAll { k, v -> !v }.keySet()
         if (missing) log.warn "No per-stage image for: ${missing.join(', ')} — those processes will run inside the CORE image, " +
                               "which lacks their tools (CNVkit/ExpansionHunter/vcfanno/somalier/regenie/GLnexus). " +
