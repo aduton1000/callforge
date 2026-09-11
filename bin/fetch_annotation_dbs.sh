@@ -44,7 +44,10 @@ FAILS=()
 
 # ---------------- helpers ----------------
 need() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not found in PATH" >&2; exit 127; }; }
-need wget; need bgzip; need tabix
+need bgzip; need tabix
+# downloader: wget preferred, curl accepted (the callforge.sif image ships curl, not wget)
+DL=""; command -v wget >/dev/null 2>&1 && DL=wget; [ -z "$DL" ] && command -v curl >/dev/null 2>&1 && DL=curl
+[ -n "$DL" ] || { echo "ERROR: neither 'wget' nor 'curl' found in PATH" >&2; exit 127; }
 [ "$MODE" = panel ] && { need bcftools; [ -s "$PANEL_BED" ] || { echo "MODE=panel needs a valid PANEL_BED" >&2; exit 2; }; }
 
 log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
@@ -62,12 +65,21 @@ integrity_ok() {  # validate a finished download
 # resumable fetch with integrity loop; returns 0 ok, 8 on 404/server-error, 1 on give-up
 fetch() {
   local url="$1" out="$2" n=0
+  # already complete (e.g. copied in from elsewhere)? don't re-download
+  if integrity_ok "$out"; then log "  present, skip: $(basename "$out")"; return 0; fi
   while :; do
     n=$((n+1))
-    wget --continue --tries=20 --retry-connrefused --waitretry=15 \
-         --timeout=60 --read-timeout=300 --no-verbose \
-         -O "$out" "$url" >>"$LOG" 2>&1
-    local rc=$?
+    local rc
+    if [ "$DL" = wget ]; then
+      wget --continue --tries=20 --retry-connrefused --waitretry=15 \
+           --timeout=60 --read-timeout=300 --no-verbose \
+           -O "$out" "$url" >>"$LOG" 2>&1; rc=$?
+    else
+      # curl: -C - resumes, -f makes HTTP errors a non-zero rc (22 -> treated like wget's 8)
+      curl -fsSL -C - --retry 20 --retry-delay 15 --retry-all-errors \
+           --connect-timeout 60 -o "$out" "$url" >>"$LOG" 2>&1; rc=$?
+      [ $rc -eq 22 ] && rc=8
+    fi
     if [ $rc -eq 8 ]; then log "  server error (404?) -> skip: $url"; return 8; fi
     if integrity_ok "$out"; then log "  ok: $(basename "$out")"; return 0; fi
     if [ $n -ge "$MAX_ATTEMPTS" ]; then log "  GAVE UP after $n attempts: $out"; return 1; fi
