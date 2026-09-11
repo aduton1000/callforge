@@ -13,8 +13,11 @@
 # detected and skipped rather than retried forever.
 #
 # MODES:
-#   full   (default) – download the entire genome-wide DB (HUGE: ~several hundred GB
-#                      to ~1 TB for genomes+exomes). This is the literal "full database".
+#   full   (default) – download the entire genome-wide DB (HUGE: ~200 GB for exomes,
+#                      ~1 TB for genomes+exomes). This is the literal "full database".
+#                      + PANEL_BED=<bed>: ALSO write gnomad.<ds>.v4.1.panel.vcf.gz by slicing
+#                      the downloaded files locally (fast, repeatable; the right choice for
+#                      exome-sized BEDs, where remote slicing gets cut off by GCS).
 #   panel            – tabix-slice ONLY your panel's target regions from the remote
 #                      files (a few hundred MB; same data at your loci). Recommended
 #                      for a targeted panel. Requires PANEL_BED.
@@ -103,6 +106,31 @@ if [ "$MODE" = full ]; then
       fetch "$url"     "$OUTDIR/$base"     || FAILS+=("$base")
       fetch "$url.tbi" "$OUTDIR/$base.tbi" || FAILS+=("$base.tbi")
     done
+    # ---- optional LOCAL panel slice from the full set (MODE=full + PANEL_BED) ----
+    # Remote tabix slicing (MODE=panel) issues one HTTP range request per interval and is
+    # cut off by GCS for exome-sized BEDs (>100k ranges). With the full files on disk the
+    # slice is a local bcftools pass per chromosome — minutes, and repeatable for any BED.
+    if [ -n "$PANEL_BED" ] && [ -s "$PANEL_BED" ]; then
+      need bcftools
+      out="$OUTDIR/gnomad.${ds}.v${GNOMAD_VER}.panel.vcf.gz"
+      chrbed="$OUTDIR/.panel.chr.bed"
+      awk 'BEGIN{OFS="\t"} {c=$1; if(c !~ /^chr/) c="chr"c; print c,$2,$3}' "$PANEL_BED" | sort -k1,1 -k2,2n > "$chrbed"
+      log "-- ${ds}: local slice of $(wc -l < "$chrbed" | tr -d ' ') intervals -> $(basename "$out")"
+      : > "$OUTDIR/.${ds}.localparts"; sl_ok=1
+      for c in $CHROMS; do
+        base="$OUTDIR/gnomad.${ds}.v${GNOMAD_VER}.sites.chr${c}.vcf.bgz"
+        [ -s "$base" ] && [ -s "$base.tbi" ] || { log "  chr${c}: full file missing — skipped"; sl_ok=0; continue; }
+        part="$OUTDIR/.${ds}.local.chr${c}.vcf.gz"
+        if bcftools view -R "$chrbed" -Oz -o "$part" "$base" 2>>"$LOG"; then echo "$part" >> "$OUTDIR/.${ds}.localparts"
+        else log "  chr${c}: slice failed"; sl_ok=0; fi
+      done
+      if [ $sl_ok -eq 1 ] && bcftools concat -Oz -o "$out" $(cat "$OUTDIR/.${ds}.localparts") 2>>"$LOG" && tabix -f -p vcf "$out"; then
+        log "  wrote $out ($(bcftools index -n "$out" 2>/dev/null || echo '?') records)"
+        rm -f $(cat "$OUTDIR/.${ds}.localparts") "$OUTDIR/.${ds}.localparts" "$chrbed"
+      else
+        log "  panel slice INCOMPLETE for ${ds} — re-run after the missing chromosomes download"; FAILS+=("$(basename "$out")")
+      fi
+    fi
   done
 
 else  # ---- panel mode: remote tabix-slice only the target regions ----
