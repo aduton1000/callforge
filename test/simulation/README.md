@@ -20,7 +20,7 @@ whose consequence is **verified against the real gene model**; and the pipeline 
 > while `bin/fetch_annotation_refs.sh` still stages HG002 truth for the real run.
 
 This is a **separate, cluster-run** asset (read-sim + pipeline run happen on the cluster).
-It is **not** wired into any Mac/offline CI. It is distinct from the small `conf/test.config`
+It is **not** wired into any offline CI. It is distinct from the small `conf/test.config`
 fixture (`bin/make_test_reference.py`), which is a 4-sample hermetic smoke test.
 
 ---

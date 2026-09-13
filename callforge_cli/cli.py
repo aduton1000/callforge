@@ -118,7 +118,7 @@ def _warn_env_if_local(passthrough):
         return
     sys.stderr.write(
         "[callforge] WARN: the `callforge` conda env was not detected. Local "
-        "(non-container) runs — especially Apple-Silicon arm64 — need its tools on PATH:\n"
+        "(non-container) runs — in particular on arm64 hosts — need its tools on PATH:\n"
         "    conda activate callforge\n"
         "  (Nextflow still activates the correct per-stage env per process with -profile conda.)\n"
         "  Proceeding anyway (use a container engine, e.g. -profile <exec>,docker, to avoid this).\n")

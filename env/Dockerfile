@@ -1,10 +1,10 @@
 # ═══════════════════════════════════════════════════════════════════════════
-#  CallForge — Docker image (Mac/CI development) for the CORE environment.
+#  CallForge — Docker image (local development / CI) for the CORE environment.
 #  Build:  docker build -t callforge:0.1.0 -f env/Dockerfile .
 #  Specialized stages (VEP, somalier, hap.py, regenie, DeepVariant) use their
 #  own conda envs / official containers — see env/*.yml and docs/.
 #  linux-64 builds are native in the image (no emulation), so callforge.yml
-#  resolves cleanly even when authored on Apple Silicon.
+#  resolves cleanly regardless of the host architecture.
 # ═══════════════════════════════════════════════════════════════════════════
 FROM mambaorg/micromamba:1.5.8
 
