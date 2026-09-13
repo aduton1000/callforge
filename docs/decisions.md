@@ -73,8 +73,8 @@ arrives. Folded into the §11 completion report.
   on real data before using the PCs as regenie/SKAT covariates (Stage 14) — if
   unstable, use self-reported ancestry or external-reference projection instead.
 
-## Apple-Silicon / local-runner notes
+## Local-runner notes (Apple Silicon)
 - The pinned `env/*.yml` are the production contract (linux/HPC native; Mac via
-  `CONDA_SUBDIR=osx-64`/Rosetta). Local native-arm64 dev used per-tool isolated
+  `CONDA_SUBDIR=osx-64`/Rosetta). Native-arm64 local runs use per-tool isolated
   envs (calling stack, cnvkit, mosdepth, ExpansionHunter) — some bioconda tools
   (e.g. mosdepth 0.3.8) lack osx-arm64 builds and need ≥0.3.11 or Rosetta.

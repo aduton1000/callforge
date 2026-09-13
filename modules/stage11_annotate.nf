@@ -8,7 +8,7 @@
 process VEP {
     tag "${params.panel_name}"; label 'medium'
     container params.vep_image
-    conda "${projectDir}/env/annotate.yml"   // local (Apple-Silicon) conda fallback: under
+    conda "${projectDir}/env/annotate.yml"   // local conda fallback: under
                                              // -profile local,conda VEP runs from this env
                                              // (ensembl-vep matched to the local cache release);
                                              // the container is used under a container engine.

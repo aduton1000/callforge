@@ -15,7 +15,7 @@
 #   bash bin/build_stage_images.sh --out /hpc/opt/callforge/images            # docker -> SIF
 #   bash bin/build_stage_images.sh --out DIR --engine apptainer               # apptainer --fakeroot
 #   bash bin/build_stage_images.sh --out DIR --only cnv,str --rebuild
-#   bash bin/build_stage_images.sh --out DIR --docker-only                    # tags only (Mac dev)
+#   bash bin/build_stage_images.sh --out DIR --docker-only                    # tags only (local development)
 #
 # Options:
 #   --out DIR         where the .sif files go (required unless --docker-only)

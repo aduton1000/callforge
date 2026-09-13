@@ -654,7 +654,7 @@ is capped by two params — set "use at most N cores / M GB", don't micromanage 
 
 | Param | Default (`local`) | Meaning |
 |:--------------|:--------|:-----------------------------------------------|
-| `--max_cpus` | `8` | max total cores CallForge uses at once on this machine |
+| `--max_cpus` | `8` | max total cores CallForge uses at once on the local machine |
 | `--max_memory` | `24.GB` | max total memory used at once |
 
 ```bash
@@ -836,7 +836,7 @@ A CallForge run composes **two** profiles with a comma — an **execution** prof
   automatically (§4.4).
 
 ```bash
-callforge run -profile local,conda         -params-file params.full.yaml # this machine, conda envs
+callforge run -profile local,conda         -params-file params.full.yaml # local machine, conda envs
 callforge run -profile hpc_slurm,singularity -params-file params.full.yaml # SLURM cluster, container images (or ,apptainer)
 ```
 
