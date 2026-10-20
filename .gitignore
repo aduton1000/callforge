@@ -86,3 +86,6 @@ docs/manual/figures/*.svg
 
 # OS cruft
 .DS_Store
+
+# local tool binaries (nextflow etc.)
+.tools/
