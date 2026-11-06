@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use CallForge, please cite it as below."
-title: "CallForge: a targeted-capture germline analysis pipeline (FASTQ → annotated joint callset → burden)"
+title: "CallForge: a targeted-capture germline analysis pipeline (FASTQ -> annotated joint callset -> burden)"
 abstract: >-
   CallForge is a disease- and organism-agnostic Nextflow DSL2 pipeline that takes
   demultiplexed paired-end FASTQs from a hybridization-capture panel and produces a
@@ -9,17 +9,30 @@ abstract: >-
   analysis counterpart to the CaptureForge probe-design pipeline and consumes its
   handoff (final_covered_targets.bed and per-gene metadata).
 authors:
-  - name: "Genomics & Bioinformatics Core"
+  - family-names: "Adu"
+    given-names: "Bright"
+    alias: "aduton1000"
+    orcid: "https://orcid.org/0000-0002-3622-2137"
+    affiliation: "Genomics & Bioinformatics Core, Noguchi Memorial Institute for Medical Research, University of Ghana, Legon, Ghana"
 version: 0.1.0
+date-released: "2026-06-13"
 license: MIT
 type: software
+repository-code: "https://github.com/aduton1000/callforge"
 keywords:
   - bioinformatics
   - germline variant calling
   - targeted capture
-  - nextflow
+  - joint genotyping
+  - GATK
   - rare-variant burden
+  - nextflow
 references:
   - type: software
-    title: "CaptureForge: hybridization-capture probe design pipeline"
+    title: "CaptureForge: a general-purpose, organism-agnostic hybridization-capture probe (bait) design pipeline"
+    repository-code: "https://github.com/aduton1000/captureforge"
     notes: "Upstream design pipeline; CallForge consumes its final_covered_targets.bed and per-gene metadata."
+  - type: software
+    title: "FamilyForge: pedigree-aware Mendelian and ACMG-style interpretation of a family callset"
+    repository-code: "https://github.com/aduton1000/familyforge"
+    notes: "Downstream interpretation layer; consumes CallForge's annotated joint VCF, cnv_calls.tsv and provenance.json."
